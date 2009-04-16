@@ -1,0 +1,52 @@
+8
+
+dir
+63
+svn+ssh://dwf@abstract.qsi.net/home/dwf/svn/thesis
+svn+ssh://dwf@abstract.qsi.net/home/dwf/svn
+
+
+
+2008-11-19T01:41:09.882677Z
+63
+dwf
+has-props
+
+svn:special svn:externals svn:needs-lock
+
+
+
+
+
+
+
+
+
+
+
+a0f5664a-12f0-11dc-849f-17d8b2a3158f
+
+tools.py
+file
+64
+
+
+
+2008-11-19T20:46:44.000000Z
+8bb438d4610d49930048230b3e6f2754
+2008-11-19T20:48:05.352996Z
+64
+dwf
+
+mog_em.py
+file
+64
+
+
+
+2008-11-24T07:01:26.000000Z
+c28cb35150fd8f3ad57c81b0ee10fb23
+2008-11-19T20:48:05.352996Z
+64
+dwf
+
