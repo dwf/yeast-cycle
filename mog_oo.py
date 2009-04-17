@@ -11,24 +11,52 @@ except ImportError:
     pyplot = None
 
 class GaussianMixture:
-    def __init__(self, K, data):
+    def AIC(self):
+        """Akaike information criterion for the current model fit."""
+        return 2 * self._numparams - 2 * self._loglikelihood()
+    
+    
+    def BIC(self):
+        """Bayesian information criterion for the current model fit."""
+        P = self._numparams
+        N = self._N
+        return -2 * self._loglikelihood() +  P * np.log(N)
+    
+        
+    def __init__(self, K, data, diagonal=False):
         self._K = K
         self._data = data
         self._N = data.shape[0]
         self._D = data.shape[1]
-        self._diagonal = False
+        self._diagonal = diagonal
         self._initialize()
         
     def _initialize(self):
         K, D, N = self._K, self._D, self._N
+        
+        # Make space for our model parameters
         means = np.empty((K,D))
         covariances = np.empty((D,D,K))
         memberships = np.empty((K))
+        
+        # Initialize them
         self._logalpha = memberships
         self._sigma = covariances
         self._mu = means
         self._responsibilities = np.empty((K,N))
+        
+        # TODO: Implement stale-checking/updating
         self._stale = True
+        
+        # Count number of parameters in the model for AIC/BIC
+        if diagonal:
+            covparams = D
+        else:
+            covparams = D * (D + 1) / 2.
+        meanparams = D
+        self._numparams = K * (covparams + meanparams + (K - 1))
+        
+        # Do a stochastic hard-assignment E-step
         self._randomEstep()
     
     def _randomEstep(self):
@@ -147,24 +175,24 @@ class GaussianMixture:
             count += 1
             print "%5d: L = %10.5f" % (count,L)
             
-    def sample(self, nsamp, component=None, shuffle=False):
-        """Sample from a mixture model."""
-        if component == None:
-            nums = random.multinomial(nsamp,np.exp(params['logalpha']))
-        else:
-            nums = np.zeros(len(params['logalpha']),dtype=int)
-            nums[component] = nsamp
-        D = params['sigma'].shape[0]
-        samples = np.empty((D,nsamp))
-        cnt = 0
-        for cmpt in xrange(len(nums)):
-            mu = params['mu'][:,cmpt]
-            sigma = params['sigma'][:,:,cmpt]
-            s = cnt
-            t = cnt + nums[cmpt]
-            #samples[:,s:t] = random.multivariate_normal(mu, sigma, (nums[cmpt],)).T
-            cnt = t
-        if shuffle:
-            samples = np.asarray(samples[:,np.random.shuffle(
-                np.arange(nsamp))])
-        return samples
+    # def sample(self, nsamp, component=None, shuffle=False):
+    #     """Sample from a mixture model."""
+    #     if component == None:
+    #         nums = random.multinomial(nsamp,np.exp(params['logalpha']))
+    #     else:
+    #         nums = np.zeros(len(params['logalpha']),dtype=int)
+    #         nums[component] = nsamp
+    #     D = params['sigma'].shape[0]
+    #     samples = np.empty((D,nsamp))
+    #     cnt = 0
+    #     for cmpt in xrange(len(nums)):
+    #         mu = params['mu'][:,cmpt]
+    #         sigma = params['sigma'][:,:,cmpt]
+    #         s = cnt
+    #         t = cnt + nums[cmpt]
+    #         #samples[:,s:t] = random.multivariate_normal(mu, sigma, (nums[cmpt],)).T
+    #         cnt = t
+    #     if shuffle:
+    #         samples = np.asarray(samples[:,np.random.shuffle(
+    #             np.arange(nsamp))])
+    #     return samples
