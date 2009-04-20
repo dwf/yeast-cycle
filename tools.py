@@ -201,7 +201,7 @@ def aligned_objects_from_im(sil, locations, ids):
         #gridpos = (labels.shape[0] - gridpos[0], gridpos[1])
         labelnumber = labels[gridpos]
         #pdb.set_trace()
-        found[labelnumber] = True
+        #found[labelnumber] = True
         #pyplot.plot([gridpos[1]],[gridpos[0]],'o')
         if labelnumber == 0:
             row,col = gridpos
@@ -258,10 +258,11 @@ def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
     #    pbar.Bar(), ' ', pbar.ETA()]
     #pb = pbar.ProgressBar(maxval=len(iterable_locs), widgets=widg).start()
     #count = 0
-    
+    print type(ids)
 
     
     for image in iterable_locs:
+        print type(ids)
         imroot = image.split('.')[0]
         im = imread_binary(os.path.join(path,prefix+imroot+suffix))
         im_locs = locs[image]

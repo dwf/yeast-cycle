@@ -69,14 +69,14 @@ class GaussianMixture:
     
     def AIC(self):
         """Akaike information criterion for the current model fit."""
-        return 2 * self._numparams - 2 * self._loglikelihood()
+        return 2 * self._numparams - 2 * self.loglikelihood()
     
     
     def BIC(self):
         """Bayesian information criterion for the current model fit."""
         P = self._numparams
         N = self._N
-        return -2 * self._loglikelihood() +  P * np.log(N)
+        return -2 * self.loglikelihood() +  P * np.log(N)
     
     
     def _randomEstep(self):
@@ -199,7 +199,7 @@ class GaussianMixture:
             pyplot.ion()
     
     
-    def EM(self, thresh=1e-10, plotiter=50, reset=False):
+    def EM(self, thresh=1e-10, plotiter=50, reset=False, hardlimit=2000):
         """Do expectation-maximization to fit the model parameters."""
         data = self._data
         K = self._K
@@ -215,9 +215,8 @@ class GaussianMixture:
         L_old = -np.inf
         L = self.loglikelihood()
         count = 0
-        while np.abs(L_old - L) > thresh:
+        while np.abs(L_old - L) > thresh and count < hardlimit:
             if plotiter != None and count > 0 and count % plotiter == 0:
-                print Ls
                 self.plot_progress(Ls)
         
             # Generate posterior over memberships
@@ -235,8 +234,15 @@ class GaussianMixture:
             count += 1
             print "%5d: L = %10.5f" % (count,L)
             Ls.append(L)
-
-
+        return Ls
+    
+    def save(self,filename):
+        np.savez(filename, K=np.array(self._K),N=np.array(self._N),
+            D=np.array(self._D), precision=self._precision, mu=self._mu,
+            logalpha=self._logalpha, diagonal=np.array(self._diagonal),
+            AIC=np.array(self.AIC()), BIC=np.array(self.BIC()),
+            update=self._update)
+    
 
 class GaussianMixtureWithGarbageModel(GaussianMixture):
     """
