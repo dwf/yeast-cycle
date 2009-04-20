@@ -102,89 +102,77 @@ def internal_knots(nknots):
     return np.mgrid[0:1:(nknots+2)*1j][1:-1]
 
 def generate_spline(data, nknots, order=3):
-    print nknots
+    #print nknots
     # Internal knots - without [-1:1] all values are 0, wtf
     knots = internal_knots(nknots)
     # Dependent variable 
     x = np.mgrid[0:1:(len(data)*1j)]
     tck,fp,ier,msg = interp.splrep(x, data, k=order, task=-1, \
         t=knots, full_output=1)
-    print tck[0]
+    #print tck[0]
     #print "Sum of squared residuals: %e" % fp
     return tck
 
-def process_all(sil,axisknots=5,widthknots=5,order=3,plot=False):
+def spline_features(obj,axisknots=5,widthknots=5,order=3,plot=False):
     axis_splines = []
     width_splines = []
     medial_lengths = []
     count = 0
-    errors = []
-    for obj in aligned_objects_from_im(sil):
-        if type(obj) == EllipseFitError or type(obj) == ObjectTooSmallError:
-            errors.append(obj)
-            continue
-        if plot:
-            pyplot.ioff()
-            pyplot.figure(1)
-            pyplot.clf()
-            pyplot.subplot(211)
-            pyplot.imshow(obj.T)
-            pyplot.axis('off')
-            pyplot.title('Aligned object #%d' % count, fontsize='small')
-            
-        med, width = medial_axis_representation(obj)
-        if len(med) <= order or len(med) <= axisknots:
-            exc = ObjectTooSmallError()
-            exc.obj = obj
-            exc.number = count
-            errors.append(exc)
-            continue
-            
-        if plot:
-            pyplot.subplot(212)
-            pyplot.plot(np.mgrid[0:1:(len(med)*1j)],med,label='Medial axis')
-            pyplot.plot(np.mgrid[0:1:(len(width)*1j)],width,label='Width')
-            pyplot.legend(prop=font.FontProperties(size='x-small'))
-            pyplot.title('Medial axis representation for object #%d'%count, \
-                fontsize='small')
-            pyplot.show()
-            pyplot.ion()
-            raw_input()
-        dep_var = np.mgrid[0:1:500j]
-        med_tck = generate_spline(med, nknots=axisknots, order=order)
+    if plot:
+        pyplot.ioff()
+        pyplot.figure(1)
+        pyplot.clf()
+        pyplot.subplot(211)
+        pyplot.imshow(obj.T)
+        pyplot.axis('off')
+        pyplot.title('Aligned object #%d' % count, fontsize='small')
         
-        if plot:
-            medsplinevalues = interp.splev(dep_var, med_tck)
-            pyplot.plot(dep_var, medsplinevalues,
-                label='Medial axis spline fit')
-            
-        width_tck = generate_spline(width, nknots=widthknots,order=order)
+    med, width = medial_axis_representation(obj)
+    if len(med) <= order or len(med) <= axisknots:
+        exc = ObjectTooSmallError()
+        exc.obj = obj
+        exc.number = count
         
-        assert np.allclose(med_tck[0],width_tck[0])
-        
-        if plot:
-            widthsplinevalues = interp.splev(dep_var, width_tck)
-            pyplot.ioff()
-            pyplot.plot(dep_var, widthsplinevalues, 
-                label='Width curve spline fit')
-            pyplot.legend(prop=font.FontProperties(size='x-small'))
-            pyplot.show()
-            pyplot.title('Spline fits for object #%d' % count, \
-                fontsize='small')
-            pyplot.ion()
-            raw_input()
-        # Why up to -4? Because these are always zero, for some reason,
-        # for our purposes.
-        width_splines.append(width_tck[1][:,np.newaxis])
-        axis_splines.append(med_tck[1][:,np.newaxis])
-        medial_lengths.append(len(med))
-        count += 1
+    if plot:
+        pyplot.subplot(212)
+        pyplot.plot(np.mgrid[0:1:(len(med)*1j)],med,label='Medial axis')
+        pyplot.plot(np.mgrid[0:1:(len(width)*1j)],width,label='Width')
+        pyplot.legend(prop=font.FontProperties(size='x-small'))
+        pyplot.title('Medial axis representation for object #%d'%count, \
+            fontsize='small')
+        pyplot.show()
+        pyplot.ion()
     
-    if len(width_splines) == 0:
-        raise ImageEmptyError()
+    dep_var = np.mgrid[0:1:500j]
+    med_tck = generate_spline(med, nknots=axisknots, order=order)
     
-    return np.concatenate(width_splines,axis=1), \
-        np.concatenate(axis_splines,axis=1), np.array(medial_lengths)
+    if plot:
+        medsplinevalues = interp.splev(dep_var, med_tck)
+        pyplot.plot(dep_var, medsplinevalues,
+            label='Medial axis spline fit')
+        
+    width_tck = generate_spline(width, nknots=widthknots,order=order)
+    
+    assert np.allclose(med_tck[0],width_tck[0])
+    
+    if plot:
+        widthsplinevalues = interp.splev(dep_var, width_tck)
+        pyplot.ioff()
+        pyplot.plot(dep_var, widthsplinevalues, 
+            label='Width curve spline fit')
+        pyplot.legend(prop=font.FontProperties(size='x-small'))
+        pyplot.show()
+        pyplot.title('Spline fits for object #%d' % count, \
+            fontsize='small')
+        pyplot.ion()
+        raw_input()
+    # Why up to -4? Because these are always zero, for some reason,
+    # for our purposes.
+    width_spline = width_tck[1][:-4]
+    axis_spline = med_tck[1][:-4]
+    medial_length = len(med)
+    count += 1
+    return np.concatenate((width_spline, axis_spline, [medial_length]))
 
 
 def aligned_objects_from_im(sil, locations, ids):
@@ -201,14 +189,11 @@ def aligned_objects_from_im(sil, locations, ids):
     
     labels, numfound = ndimage.label(sil)
     objects = ndimage.find_objects(labels)
-    found = np.zeros((numfound+1,), dtype=bool)
-    missing = []
+    #found = np.zeros((numfound+1,), dtype=bool)
+    db_obj_accounted_for = []
     found_objects = {}
-    #pyplot.clf()
-    #pyplot.imshow(sil,origin='bottom')
-    #pyplot.scatter(*locations.T)
-
-
+    features = []
+    
     for ii in xrange(len(locations)):
         # Rows and columns are y and x, respectively, so we reverse x and y
         # after rounding to nearest
@@ -219,15 +204,25 @@ def aligned_objects_from_im(sil, locations, ids):
         found[labelnumber] = True
         #pyplot.plot([gridpos[1]],[gridpos[0]],'o')
         if labelnumber == 0:
-            print >>sys.stderr, "[e] Label # missing im #%d, obj #%d" % tuple(ids[ii])
-            pyplot.plot([gridpos[1]],[gridpos[0]],'yx')
-            raw_input()
-            missing.append(ii)
+            row,col = gridpos
+            neighb = labels[(row-3):(row+3), (col-3):(col+3)]
+            if np.all(neighb == 0):
+                print >>sys.stderr, "[e] Label # missing im #%d, obj #%d" % \
+                    tuple(ids[ii])
+                pyplot.clf()
+                pyplot.imshow(sil)
+                pyplot.plot([gridpos[1]],[gridpos[0]],'yx')
+                missing.append(ii)
+            else:
+                u, s = zip(*[(u, np.sum(neighb == u)) for u in \
+                    np.unique(neighb)])
+                labelnumber = u[np.argsort(s)[-1]]
         im = labels[objects[labelnumber-1]] == labelnumber
         #pdb.set_trace()
         coeffs = fit_ellipse(*(np.where(im)))
         if coeffs.size != 6:
-            print >>sys.stderr, "[e] Ellipse fit im #%d, obj #%d" % tuple(ids[ii])
+            print >>sys.stderr, "[e] Ellipse fit im #%d, obj #%d" % \
+                tuple(ids[ii])
             missing.append(ii)
             continue
         else:
@@ -235,15 +230,18 @@ def aligned_objects_from_im(sil, locations, ids):
         preangle = b / (a - c)
         if not np.isinf(preangle):
             angle = radians_to_degrees(-0.5 * np.arctan(preangle))
-            rotated = ndimage.rotate(im,angle)
+            rotated = ndimage.rotate(np.float64(im),angle)
             bounds = ndimage.find_objects(rotated > 0)[0]
             height, width = np.shape(rotated[bounds])
             if width > height:
                 angle -= 90.0
                 rotated = ndimage.rotate(im, angle)
                 bounds = ndimage.find_objects(rotated > 0)[0]
-            found_objects[tuple(ids[ii])] = rotated[bounds]
-    return found_objects, missing
+            key = "obj_"+str(ids[ii,0])+str(ids[ii,1])
+            found_objects[key] = obj = rotated[bounds]
+            features.append(spline_features(obj))[np.newaxis,:]
+            db_obj_accounted_for.append(ii)
+    return np.concatenate(features,axis=0), ids[db_obj_accounted_for]
 
 def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
     suffix='_binary.png',  plot=False):
@@ -269,8 +267,7 @@ def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
         im_ids = ids[image]
         objects = aligned_objects_from_im(im,im_locs,im_ids)
         count += 1
-        if count % 10 == 0:
-            pb.update(count)
+        pb.update(count)
     pb.finish()
     # data = []
     
@@ -337,3 +334,42 @@ def sample_plots(params,meandata,stddata,subplotsize,nsamp):
             plot_from_spline(tck2,500,'-.')
     pyplot.show()
     pyplot.ion()
+
+
+def cells_in_database_per_imagefile(datafiles, headerfile=None):
+    """
+    Reads in CSV files that contain object records.
+
+    Returns a dictionary where the keys are the image filename (with 
+    / replaced by _) and the values are NumPy arrays containing coordinate
+    lists, as well as another dictionary giving ImageNumber/ObjectNumbers.
+    """
+    if hasattr(datafiles, 'read'):
+        datafiles = [datafiles]
+    cells = {}
+    if headerfile:
+        headers = [h[1:-1] for h in headerfile.read().split(',')]
+    else:
+        headers = None
+    for datafile in datafiles:
+        reader = csv.DictReader(datafile, fieldnames=headers,
+            delimiter=',',quotechar='"')
+        for row in reader:
+    	    key = row['Image_PathName_GFP'] + '/' + \
+    	        row['Image_FileName_GFP']
+    	    imgnum = row['ImageNumber']
+    	    objnum = row['ObjectNumber']
+    	    location = [np.float64(row['cells_Location_Center_X']),
+    	        np.float64(row['cells_Location_Center_Y'])]
+    	    cells.setdefault(key, []).append(((imgnum,objnum),location))
+    	print "Finished with %s" % datafile.name
+    allids = {}
+    for image in cells.keys():
+        ids, locations = zip(*cells[image])
+        ids = np.array(ids,dtype=int)
+        locations = np.array(locations)
+        del cells[image]
+        image = image.replace('/','_')
+        cells[image] = locations
+        allids[image] = ids
+    return cells, allids
