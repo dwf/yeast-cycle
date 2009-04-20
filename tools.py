@@ -1,18 +1,23 @@
+# System imports
+import os, os.path, re, sys, csv
+
+# Python Imaging Library
 import PIL.Image
 
-import os, os.path, re, sys
-
+# SciPy imports
 import numpy as np
-
 import scipy.linalg
 import scipy.ndimage as ndimage
 import scipy.interpolate as interp
 
+# Matplotlib imports
 import matplotlib.image
 import matplotlib.pyplot as pyplot
 import matplotlib.legend as mlegend
 import matplotlib.font_manager as font
 
+
+import pdb
 import mog_em
 
 class ImageEmptyError(ValueError):
@@ -23,7 +28,8 @@ class EllipseFitError(ValueError):
 
 class ObjectTooSmallError(ValueError):
     pass
-    
+
+
 _ellipse_cstrt = np.zeros((6,6))
 _ellipse_cstrt[2,0] = -2; _ellipse_cstrt[0,2] = -2; _ellipse_cstrt[1,1] =  1
     
@@ -35,7 +41,7 @@ def imread_binary(*kw, **args):
     
     """
     im = PIL.Image.open(*kw, **args)
-    return matplotlib.image.pil_to_array(im)
+    return matplotlib.image.pil_to_array(im)[:,:,0:3].sum(axis=2) > 0
 
 def fit_ellipse(x,y):
     """
@@ -69,47 +75,6 @@ def radians_to_degrees(angle):
     """Encapsulate turning radians into degrees for code clarity."""
     return angle * 180.0 / np.pi
 
-def preprocess(sil, minimum=25):
-    """
-    Generator that processes each object in a binary threshold image.
-    Yields an image of the object rotated to align to the best fit ellipse,
-    and an additional 90 degrees if width > height, so that the longest
-    so that the vertical medial axis is as long as possible.
-    """
-    labels, numfound = ndimage.label(sil)
-    objects = ndimage.find_objects(labels)
-    for i in xrange(len(objects)):
-        obj = objects[i]
-        im = np.array(sil[obj])
-        im[labels[obj] != (i+1)] = 0
-        im = np.uint8(im)
-        
-        if np.prod(np.shape(im)) < minimum:
-            exc = ObjectTooSmallError()
-            exc.number = i
-            yield exc
-            continue
-            
-        coeffs = fit_ellipse(*(np.where(im)))
-        if coeffs.size != 6:
-            exc = EllipseFitError()
-            exc.number = i
-            yield exc
-            continue
-        else:
-            a,b,c,d,e,f = coeffs
-        preangle = b / (a - c)
-        if not np.isinf(preangle):
-            angle = radians_to_degrees(-0.5 * np.arctan(preangle))
-            rotated = ndimage.rotate(im,angle)
-            bounds = ndimage.find_objects(rotated > 0)[0]
-            height, width = np.shape(rotated[bounds])
-            if width > height:
-                angle -= 90.0
-                rotated = ndimage.rotate(im, angle)
-                bounds = ndimage.find_objects(rotated > 0)[0]
-            yield rotated[bounds]
-
 def medial_axis_representation(obj):
     """Return the (mean-subtracted) medial points and width."""
     width = np.zeros(obj.shape[0])
@@ -133,7 +98,6 @@ def medial_axis_representation(obj):
     width /= np.float64(len(medial))
     return medial, width
 
-
 def internal_knots(nknots):
     return np.mgrid[0:1:(nknots+2)*1j][1:-1]
 
@@ -148,14 +112,14 @@ def generate_spline(data, nknots, order=3):
     print tck[0]
     #print "Sum of squared residuals: %e" % fp
     return tck
-    
+
 def process_all(sil,axisknots=5,widthknots=5,order=3,plot=False):
     axis_splines = []
     width_splines = []
     medial_lengths = []
     count = 0
     errors = []
-    for obj in preprocess(sil):
+    for obj in aligned_objects_from_im(sil):
         if type(obj) == EllipseFitError or type(obj) == ObjectTooSmallError:
             errors.append(obj)
             continue
@@ -216,48 +180,122 @@ def process_all(sil,axisknots=5,widthknots=5,order=3,plot=False):
         medial_lengths.append(len(med))
         count += 1
     
-    
     if len(width_splines) == 0:
         raise ImageEmptyError()
     
     return np.concatenate(width_splines,axis=1), \
         np.concatenate(axis_splines,axis=1), np.array(medial_lengths)
 
-def load_silhouettes(files):
-    for fn in files:
-        im = imread_binary(fn)
-        # Strip out the alpha channel, sum and then binarize
-        im = im[:,:,0:3].sum(axis=2) > 0
-        yield fn, im
+
+def aligned_objects_from_im(sil, locations, ids):
+    """
+    Generator that processes each object in a binary threshold image.
+    Yields an image of the object rotated to align to the best fit ellipse,
+    and an additional 90 degrees if width > height, so that the longest
+    so that the vertical medial axis is as long as possible.
+    """
+    # Reverse rows
+    sil = sil[::-1]
+    
+    sil = ndimage.binary_fill_holes(sil)
+    
+    labels, numfound = ndimage.label(sil)
+    objects = ndimage.find_objects(labels)
+    found = np.zeros((numfound+1,), dtype=bool)
+    missing = []
+    found_objects = {}
+    #pyplot.clf()
+    #pyplot.imshow(sil,origin='bottom')
+    #pyplot.scatter(*locations.T)
 
 
-def load_and_process(path,pattern=r'.+\.png', plot=False):
-    files = [os.path.join(path,f) for f in os.listdir(path) \
-        if os.path.isfile(os.path.join(path,f)) and re.match(pattern,f)]
-    data = []
+    for ii in xrange(len(locations)):
+        # Rows and columns are y and x, respectively, so we reverse x and y
+        # after rounding to nearest
+        gridpos = tuple([int(round(a)) for a in locations[ii]][::-1])
+        #gridpos = (labels.shape[0] - gridpos[0], gridpos[1])
+        labelnumber = labels[gridpos]
+        #pdb.set_trace()
+        found[labelnumber] = True
+        #pyplot.plot([gridpos[1]],[gridpos[0]],'o')
+        if labelnumber == 0:
+            print >>sys.stderr, "[e] Label # missing im #%d, obj #%d" % tuple(ids[ii])
+            pyplot.plot([gridpos[1]],[gridpos[0]],'yx')
+            raw_input()
+            missing.append(ii)
+        im = labels[objects[labelnumber-1]] == labelnumber
+        #pdb.set_trace()
+        coeffs = fit_ellipse(*(np.where(im)))
+        if coeffs.size != 6:
+            print >>sys.stderr, "[e] Ellipse fit im #%d, obj #%d" % tuple(ids[ii])
+            missing.append(ii)
+            continue
+        else:
+            a,b,c,d,e,f = coeffs
+        preangle = b / (a - c)
+        if not np.isinf(preangle):
+            angle = radians_to_degrees(-0.5 * np.arctan(preangle))
+            rotated = ndimage.rotate(im,angle)
+            bounds = ndimage.find_objects(rotated > 0)[0]
+            height, width = np.shape(rotated[bounds])
+            if width > height:
+                angle -= 90.0
+                rotated = ndimage.rotate(im, angle)
+                bounds = ndimage.find_objects(rotated > 0)[0]
+            found_objects[tuple(ids[ii])] = rotated[bounds]
+    return found_objects, missing
+
+def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
+    suffix='_binary.png',  plot=False):
+    """asdfsadgsahfd"""
+    
+    if hasattr(locs,'files'):
+        iterable_locs = locs.files
+    else:
+        iterable_locs = locs
     
     import progressbar as pbar
     widg = widgets=[pbar.RotatingMarker(), ' ', pbar.Percentage(),' ', \
         pbar.Bar(), ' ', pbar.ETA()]
-    pb = pbar.ProgressBar(maxval=len(files), widgets=widg).start()
-    
+    pb = pbar.ProgressBar(maxval=len(iterable_locs), widgets=widg).start()
     count = 0
-    for fn, image in load_silhouettes(files):
-        try:
-            widths, axes, lengths = process_all(image, plot=plot)
-        except ImageEmptyError, e:
-            #print >> sys.stderr, "%s contained nothing" % fn
-            #print >> sys.stderr, str(type(e)), str(e)
-            continue
-        #print np.shape(widths)
-        #print np.shape(axes)
-        #print np.shape(lengths)
-        bigmat = np.concatenate((widths,axes,lengths[np.newaxis,:]),axis=0)
-        data.append(bigmat)
+    
+
+    
+    for image in iterable_locs:
+        imroot = image.split('.')[0]
+        im = imread_binary(os.path.join(path,prefix+imroot+suffix))
+        im_locs = locs[image]
+        im_ids = ids[image]
+        objects = aligned_objects_from_im(im,im_locs,im_ids)
         count += 1
-        pb.update(count)
+        if count % 10 == 0:
+            pb.update(count)
     pb.finish()
-    return np.concatenate(data,axis=1)
+    # data = []
+    
+    # import progressbar as pbar
+    # widg = widgets=[pbar.RotatingMarker(), ' ', pbar.Percentage(),' ', \
+    #     pbar.Bar(), ' ', pbar.ETA()]
+    # pb = pbar.ProgressBar(maxval=len(files), widgets=widg).start()
+    # 
+    # count = 0
+    # for fn, image in load_silhouettes(files):
+    #     try:
+    #         widths, axes, lengths = process_all(image, plot=plot)
+    #     except ImageEmptyError, e:
+    #         #print >> sys.stderr, "%s contained nothing" % fn
+    #         #print >> sys.stderr, str(type(e)), str(e)
+    #         continue
+    #     #print np.shape(widths)
+    #     #print np.shape(axes)
+    #     #print np.shape(lengths)
+    #     bigmat = np.concatenate((widths,axes,lengths[np.newaxis,:]),axis=0)
+    #     data.append(bigmat)
+    #     count += 1
+    #     pb.update(count)
+    # pb.finish()
+    # return np.concatenate(data,axis=1)
 
 
 def coef2knots(x):
