@@ -129,10 +129,7 @@ def spline_features(obj,axisknots=5,widthknots=5,order=3,plot=False):
         
     med, width = medial_axis_representation(obj)
     if len(med) <= order or len(med) <= axisknots:
-        exc = ObjectTooSmallError()
-        exc.obj = obj
-        exc.number = count
-        
+       	raise ObjectTooSmallError()
     if plot:
         pyplot.subplot(212)
         pyplot.plot(np.mgrid[0:1:(len(med)*1j)],med,label='Medial axis')
@@ -201,7 +198,7 @@ def aligned_objects_from_im(sil, locations, ids):
         #gridpos = (labels.shape[0] - gridpos[0], gridpos[1])
         labelnumber = labels[gridpos]
         #pdb.set_trace()
-        found[labelnumber] = True
+        #found[labelnumber] = True
         #pyplot.plot([gridpos[1]],[gridpos[0]],'o')
         if labelnumber == 0:
             row,col = gridpos
@@ -209,10 +206,10 @@ def aligned_objects_from_im(sil, locations, ids):
             if np.all(neighb == 0):
                 print >>sys.stderr, "[e] Label # missing im #%d, obj #%d" % \
                     tuple(ids[ii])
-                pyplot.clf()
-                pyplot.imshow(sil)
-                pyplot.plot([gridpos[1]],[gridpos[0]],'yx')
-                missing.append(ii)
+                #pyplot.clf()
+                #pyplot.imshow(sil)
+                #pyplot.plot([gridpos[1]],[gridpos[0]],'yx')
+                #missing.append(ii)
             else:
                 u, s = zip(*[(u, np.sum(neighb == u)) for u in \
                     np.unique(neighb)])
@@ -223,7 +220,7 @@ def aligned_objects_from_im(sil, locations, ids):
         if coeffs.size != 6:
             print >>sys.stderr, "[e] Ellipse fit im #%d, obj #%d" % \
                 tuple(ids[ii])
-            missing.append(ii)
+            #missing.append(ii)
             continue
         else:
             a,b,c,d,e,f = coeffs
@@ -240,13 +237,16 @@ def aligned_objects_from_im(sil, locations, ids):
                 angle -= 90.0
                 rotated = ndimage.rotate(im, angle)
                 try:
-                    bounds = ndimage.find_objects(rotated > 0)[0
+                    bounds = ndimage.find_objects(rotated > 0)[0]
                 except IndexError, e:
                     pass
             key = "obj_"+str(ids[ii,0])+str(ids[ii,1])
             found_objects[key] = obj = rotated[bounds]
-            features.append(spline_features(obj))[np.newaxis,:]
-            db_obj_accounted_for.append(ii)
+            try:
+                features.append(spline_features(obj)[np.newaxis,:])
+                db_obj_accounted_for.append(ii)
+            except ObjectTooSmallError, e:
+                pass
     return np.concatenate(features,axis=0), ids[db_obj_accounted_for]
 
 def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
@@ -266,15 +266,21 @@ def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
     #count = 0
     
 
-    
+    allobjects = []
+    allids = []
     for image in iterable_locs:
         imroot = image.split('.')[0]
         im = imread_binary(os.path.join(path,prefix+imroot+suffix))
         im_locs = locs[image]
         im_ids = ids[image]
-        objects = aligned_objects_from_im(im,im_locs,im_ids)
-        count += 1
+        objects, newids = aligned_objects_from_im(im,im_locs,im_ids)
+        #count += 1
+        allobjects.append(objects)
+        allids.append(newids)
         #pb.update(count)
+    allobjects = np.concatenate(allobjects,axis=0)
+    allids = np.concatenate(allids,axis=0)
+    return allobjects, allids
     #pb.finish()
     # data = []
     
@@ -324,7 +330,7 @@ def unmix_and_sample(params,meandata,stddata,k=3,component=None):
 def plot_from_spline(tck, samples=500, *args, **kwds):
     dep_var = np.mgrid[0:1:(samples * 1j)]
     splval = interp.splev(dep_var, tck)
-    pyplot.plot(dep_var,splval,*args,**kwds)
+    #pyplot.plot(dep_var,splval,*args,**kwds)
 
 def sample_plots(params,meandata,stddata,subplotsize,nsamp):
     pyplot.ioff()
