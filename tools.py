@@ -242,7 +242,7 @@ def aligned_objects_from_im(sil, locations, ids):
                 try:
                     bounds = ndimage.find_objects(rotated > 0)[0
                 except IndexError, e:
-                    pass]
+                    pass
             key = "obj_"+str(ids[ii,0])+str(ids[ii,1])
             found_objects[key] = obj = rotated[bounds]
             features.append(spline_features(obj))[np.newaxis,:]
