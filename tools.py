@@ -264,11 +264,12 @@ def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
     #    pbar.Bar(), ' ', pbar.ETA()]
     #pb = pbar.ProgressBar(maxval=len(iterable_locs), widgets=widg).start()
     #count = 0
-    
+    print type(ids)
 
     allobjects = []
     allids = []
     for image in iterable_locs:
+        print type(ids)
         imroot = image.split('.')[0]
         im = imread_binary(os.path.join(path,prefix+imroot+suffix))
         im_locs = locs[image]
