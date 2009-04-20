@@ -231,12 +231,18 @@ def aligned_objects_from_im(sil, locations, ids):
         if not np.isinf(preangle):
             angle = radians_to_degrees(-0.5 * np.arctan(preangle))
             rotated = ndimage.rotate(np.float64(im),angle)
-            bounds = ndimage.find_objects(rotated > 0)[0]
+            try:
+                bounds = ndimage.find_objects(rotated > 0)[0]
+            except IndexError, e:
+                pass
             height, width = np.shape(rotated[bounds])
             if width > height:
                 angle -= 90.0
                 rotated = ndimage.rotate(im, angle)
-                bounds = ndimage.find_objects(rotated > 0)[0]
+                try:
+                    bounds = ndimage.find_objects(rotated > 0)[0
+                except IndexError, e:
+                    pass]
             key = "obj_"+str(ids[ii,0])+str(ids[ii,1])
             found_objects[key] = obj = rotated[bounds]
             features.append(spline_features(obj))[np.newaxis,:]
