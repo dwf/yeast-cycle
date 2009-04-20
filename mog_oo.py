@@ -1,7 +1,7 @@
 import numpy as np
 import numpy.linalg as linalg
 import numpy.random as random
-import ipdb
+#import ipdb
 
 MIN_LOGPROB = np.finfo(np.float64).min
 
