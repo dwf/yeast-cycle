@@ -252,11 +252,12 @@ def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
     else:
         iterable_locs = locs
     
-    import progressbar as pbar
-    widg = widgets=[pbar.RotatingMarker(), ' ', pbar.Percentage(),' ', \
-        pbar.Bar(), ' ', pbar.ETA()]
-    pb = pbar.ProgressBar(maxval=len(iterable_locs), widgets=widg).start()
-    count = 0
+    
+    #import progressbar as pbar
+    #widg = widgets=[pbar.RotatingMarker(), ' ', pbar.Percentage(),' ', \
+    #    pbar.Bar(), ' ', pbar.ETA()]
+    #pb = pbar.ProgressBar(maxval=len(iterable_locs), widgets=widg).start()
+    #count = 0
     
 
     
@@ -267,8 +268,8 @@ def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
         im_ids = ids[image]
         objects = aligned_objects_from_im(im,im_locs,im_ids)
         count += 1
-        pb.update(count)
-    pb.finish()
+        #pb.update(count)
+    #pb.finish()
     # data = []
     
     # import progressbar as pbar
