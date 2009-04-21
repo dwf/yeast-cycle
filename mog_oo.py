@@ -1,12 +1,9 @@
 import numpy as np
 import numpy.linalg as linalg
 import numpy.random as random
-#import ipdb
+import ipdb
 
-print "pants"
 MIN_LOGPROB = np.finfo(np.float64).min
-MIN_POSTERIOR = 1.0e-8
-
 
 try:
     import matplotlib.pyplot as pyplot
@@ -21,21 +18,23 @@ def logsumexp(x, axis=-1):
     shall be computed. If -1 (which is also the default), logsumexp is 
     computed along the last dimension. 
     
-    By Roland Memisevic, distributed under Python License.
+    By Roland Memisevic, distributed under the Python License as part of
+    the Monte machine learning package: http://montepython.sourceforge.net
     """
     if len(x.shape) < 2:  #only one possible dimension to sum over?
         xmax = x.max()
         return xmax + np.log(np.sum(np.exp(x-xmax)))
     else:
         if axis != -1:
-            x = x.transpose(range(axis) + range(axis+1, len(x.shape)) + [axis])
-        lastdim = len(x.shape)-1
+            x = x.transpose(range(axis)+range(axis+1,len(x.shape))+[axis])
+        lastdim = len(x.shape) - 1
         xmax = x.max(lastdim)
         return xmax + np.log(np.sum(np.exp(x-xmax[...,np.newaxis]),lastdim))
 
+
 class GaussianMixture:
     def __init__(self, K, data, diagonal=False, update=None, 
-        pseudocounts=0.01, prior=0.2, cache=True):
+        pseudocounts=None, prior_var=1, cache=True):
         """Constructor."""
         self._K = K
         self._data = data
@@ -43,8 +42,8 @@ class GaussianMixture:
         self._D = data.shape[1]
         self._diagonal = diagonal
         self._cache = cache
-        self._pseudocounts = 0.01
-        self._prior = 0.2
+        self._pseudocounts = pseudocounts
+        self._prior_var = prior_var
         self._logj_cache = None
         self._lik_cache = None
         if update == None:
@@ -169,22 +168,30 @@ class GaussianMixture:
         return lik.sum()
     
     
-    def Mstep(self, pseudocounts=0.01, prior=0.1):
+    def Mstep(self, pseudocounts=None):
         """
         Maximize the model parameters with respect to the expected
         complete log likelihood.
         """
         q = self._responsibilities
         sumq = q.sum(axis=1)
-        sumq[sumq == 0] = 1.
+        if np.any(sumq == 0):
+            print "Uh oh, clusters %s got no points." % str(sumq[sumq==0])
+        sumq[sumq == 0.] = 1. # HACK
         data = self._data
         mu = np.dot(q, data) / sumq[:, np.newaxis]
-        if np.any(np.isnan(mu)):
-            ipdb.set_trace()
         K = q.shape[0]
         meansub = data[:,:,np.newaxis] - mu.T[np.newaxis,:,:]
         meansub2 = np.array(meansub)
+        #ipdb.set_trace()
         meansub *= q.T[:,np.newaxis,:]
+        
+        
+        
+        self._oldmu = self._mu[:]
+        self._oldprecision = self._precision[:]
+        self._oldlogalpha = self._logalpha[:]
+        
         for cluster in xrange(K):
             if self._updating_all() or self._update[cluster]:
                 xmmu = meansub[:,:,cluster] * q[cluster,:][:,np.newaxis]
@@ -195,11 +202,11 @@ class GaussianMixture:
                     newsigma[:,:] = 0.
                     newsigma[xrange(self._D),xrange(self._D)] = diag
                 if pseudocounts != None:
-                    self._regularize(newsigma, pseudocounts, self._prior)
+                    self._regularize(newsigma, pseudocounts, self._prior_var)
                 try:
                     self._precision[:,:,cluster] = linalg.inv(newsigma)
                 except linalg.LinAlgError:
-                    print "Failed to invert, cond=%f" % cond(newsigma)
+                    print "Failed to invert, cond=%f" % linalg.cond(newsigma)
                     pass
         if self._updating_all():
             self._mu = mu
@@ -209,10 +216,10 @@ class GaussianMixture:
         self._logalpha[np.isinf(self._logalpha)] = MIN_LOGPROB
     
     
-    def _regularize(self, cov, weight, prior):
+    def _regularize(self, cov, weight, prior_var):
         denom = (1. + weight)
         cov *= 1. / denom
-        cov.flat[::(self._D+1)] += prior * weight / denom
+        cov.flat[::(self._D+1)] += prior_var * weight / denom
     
     def plot_progress(self,Ls):
         """Plot the progress with matplotlib (if available)."""
@@ -254,12 +261,13 @@ class GaussianMixture:
             
             L_old = L
             L = self.loglikelihood()
-            
             if len(Ls) > 0 and L < L_old and not np.allclose(L, L_old):
                 print "Likelihood went down!"
             
             count += 1
             print "%5d: L = %10.5f" % (count,L)
+            if L > 0:
+                ipdb.set_trace()
             Ls.append(L)
         return Ls
     
