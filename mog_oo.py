@@ -3,7 +3,10 @@ import numpy.linalg as linalg
 import numpy.random as random
 #import ipdb
 
+print "pants"
 MIN_LOGPROB = np.finfo(np.float64).min
+MIN_POSTERIOR = 1.0e-8
+
 
 try:
     import matplotlib.pyplot as pyplot
@@ -11,9 +14,28 @@ try:
 except ImportError:
     pyplot = None
 
+def logsumexp(x, axis=-1):
+    """
+    Compute log(sum(exp(x))) in a numerically stable way.  
+    Use second argument to specify along which dimensions the logsumexp
+    shall be computed. If -1 (which is also the default), logsumexp is 
+    computed along the last dimension. 
+    
+    By Roland Memisevic, distributed under Python License.
+    """
+    if len(x.shape) < 2:  #only one possible dimension to sum over?
+        xmax = x.max()
+        return xmax + np.log(np.sum(np.exp(x-xmax)))
+    else:
+        if axis != -1:
+            x = x.transpose(range(axis) + range(axis+1, len(x.shape)) + [axis])
+        lastdim = len(x.shape)-1
+        xmax = x.max(lastdim)
+        return xmax + np.log(np.sum(np.exp(x-xmax[...,np.newaxis]),lastdim))
 
 class GaussianMixture:
-    def __init__(self, K, data, diagonal=False, update=None, cache=True):
+    def __init__(self, K, data, diagonal=False, update=None, 
+        pseudocounts=0.01, prior=0.2, cache=True):
         """Constructor."""
         self._K = K
         self._data = data
@@ -21,6 +43,8 @@ class GaussianMixture:
         self._D = data.shape[1]
         self._diagonal = diagonal
         self._cache = cache
+        self._pseudocounts = 0.01
+        self._prior = 0.2
         self._logj_cache = None
         self._lik_cache = None
         if update == None:
@@ -43,12 +67,12 @@ class GaussianMixture:
         
         # Make space for our model parameters
         means = np.empty((K,D))
-        covariances = np.empty((D,D,K))
+        precision = np.empty((D,D,K))
         memberships = np.empty((K))
         
         # Initialize them
         self._logalpha = memberships
-        self._precision = covariances
+        self._precision = precision
         self._mu = means
         self._responsibilities = np.empty((K,N))
 
@@ -97,19 +121,17 @@ class GaussianMixture:
         """
         centered = self._data - self._mu[cluster,:][np.newaxis,:]
         D = self._D
-        logphat = -0.5 * (centered * np.dot(centered, self._precision[:,:,cluster])).sum(axis=1)
-        lognormalizer = D/2.0 *np.log(2*np.pi) - 0.5 * \
+        logphat = -0.5 * (centered * np.dot(centered,
+            self._precision[:,:,cluster])).sum(axis=1)
+        lognormalizer = -D/2.0 * np.log(2*np.pi) + 0.5 * \
             np.log(linalg.det(self._precision[:,:,cluster]))
         return logphat - lognormalizer
-    
     
     def _logjoint(self):
         """
         Function that computes the log joint probability of each training
         example.
         """
-        #if self._cache and not self._stale and self._logj_cache != None:
-        #    return self._logj_cache, self._lik_cache
         logalpha = self._logalpha
         precision = self._precision
         mu = self._mu
@@ -121,7 +143,7 @@ class GaussianMixture:
             p[cluster,:] = self.log_probs(cluster)
         p += logalpha[:,np.newaxis]
         B = 0
-        lik = np.log(np.exp(p+B).sum(axis=0))-B
+        lik = logsumexp(p,axis=0)
         self._logj_cache = p
         self._lik_cache = p
         self._stale = False
@@ -139,7 +161,6 @@ class GaussianMixture:
         #logjoint,lik = dists
         self._responsibilities = np.exp(logjoint - lik)
     
-    
     def loglikelihood(self):
         """
         Log likelihood of the training data.
@@ -148,15 +169,18 @@ class GaussianMixture:
         return lik.sum()
     
     
-    def Mstep(self):
+    def Mstep(self, pseudocounts=0.01, prior=0.1):
         """
         Maximize the model parameters with respect to the expected
         complete log likelihood.
         """
         q = self._responsibilities
         sumq = q.sum(axis=1)
+        sumq[sumq == 0] = 1.
         data = self._data
         mu = np.dot(q, data) / sumq[:, np.newaxis]
+        if np.any(np.isnan(mu)):
+            ipdb.set_trace()
         K = q.shape[0]
         meansub = data[:,:,np.newaxis] - mu.T[np.newaxis,:,:]
         meansub2 = np.array(meansub)
@@ -170,21 +194,25 @@ class GaussianMixture:
                     diag = np.diag(newsigma)
                     newsigma[:,:] = 0.
                     newsigma[xrange(self._D),xrange(self._D)] = diag
-                if linalg.cond(newsigma) < 1.0e14:
-                    try:
-                        self._precision[:,:,cluster] = linalg.inv(newsigma)
-                    except linalg.LinAlgError:
-                        pass
-            else:
-                self._precision[:,:,cluster] = self._precision[:,:,cluster]
+                if pseudocounts != None:
+                    self._regularize(newsigma, pseudocounts, self._prior)
+                try:
+                    self._precision[:,:,cluster] = linalg.inv(newsigma)
+                except linalg.LinAlgError:
+                    print "Failed to invert, cond=%f" % cond(newsigma)
+                    pass
         if self._updating_all():
             self._mu = mu
         else:
             self._mu[self._update,:] = mu[self._update,:]
         self._logalpha = np.log(sumq) - np.log(sumq.sum())
         self._logalpha[np.isinf(self._logalpha)] = MIN_LOGPROB
-        #self._stale = True
     
+    
+    def _regularize(self, cov, weight, prior):
+        denom = (1. + weight)
+        cov *= 1. / denom
+        cov.flat[::(self._D+1)] += prior * weight / denom
     
     def plot_progress(self,Ls):
         """Plot the progress with matplotlib (if available)."""
@@ -198,7 +226,6 @@ class GaussianMixture:
             pyplot.show()
             pyplot.ion()
     
-    
     def EM(self, thresh=1e-10, plotiter=50, reset=False, hardlimit=2000):
         """Do expectation-maximization to fit the model parameters."""
         data = self._data
@@ -210,7 +237,7 @@ class GaussianMixture:
             except ImportError:
                 print "matplotlib not available, not plotting"
                 plotiter = None
-        self.Mstep()
+        self.Mstep(pseudocounts=self._pseudocounts)
         Ls = []
         L_old = -np.inf
         L = self.loglikelihood()
@@ -221,9 +248,9 @@ class GaussianMixture:
         
             # Generate posterior over memberships
             self.Estep()
-        
+            
             # Update mixture parameters
-            self.Mstep()
+            self.Mstep(pseudocounts=self._pseudocounts)
             
             L_old = L
             L = self.loglikelihood()
