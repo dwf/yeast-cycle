@@ -1,12 +1,14 @@
 import numpy as np
 import numpy.linalg as linalg
 import numpy.random as random
-#import ipdb
+import pdb
+import matplotlib.font_manager as font
 
-print "pants"
 MIN_LOGPROB = np.finfo(np.float64).min
 MIN_POSTERIOR = 1.0e-8
 
+
+print "pants"
 
 try:
     import matplotlib.pyplot as pyplot
@@ -58,6 +60,7 @@ class GaussianMixture:
     def _updating_all(self):
         return np.all(self._update)
     
+    
     def _initialize(self):
         """
         Allocate space for the model parameters & initialize, perform
@@ -75,10 +78,7 @@ class GaussianMixture:
         self._precision = precision
         self._mu = means
         self._responsibilities = np.empty((K,N))
-
-        # TODO: Implement stale-checking/updating
-        self._stale = True
-
+        
         # Count number of parameters in the model for AIC/BIC
         if self._diagonal:
             covparams = D
@@ -86,7 +86,7 @@ class GaussianMixture:
             covparams = D * (D + 1) / 2.
         meanparams = D
         self._numparams = K * (covparams + meanparams + (K - 1))
-
+        
         # Do a stochastic hard-assignment E-step
         self._randomEstep()
     
@@ -121,9 +121,10 @@ class GaussianMixture:
         """
         centered = self._data - self._mu[cluster,:][np.newaxis,:]
         D = self._D
+        #pdb.set_trace()
         logphat = -0.5 * (centered * np.dot(centered,
             self._precision[:,:,cluster])).sum(axis=1)
-        lognormalizer = -D/2.0 * np.log(2*np.pi) + 0.5 * \
+        lognormalizer = D/2.0 * np.log(2*np.pi) - 0.5 * \
             np.log(linalg.det(self._precision[:,:,cluster]))
         return logphat - lognormalizer
     
@@ -139,14 +140,11 @@ class GaussianMixture:
         N = self._data.shape[0]
         p = np.nan * np.zeros((K,N))
         # calculate logjoint
-        for cluster in xrange(logalpha.shape[0]):
+        for cluster in xrange(K):
             p[cluster,:] = self.log_probs(cluster)
+        #pdb.set_trace()
         p += logalpha[:,np.newaxis]
-        B = 0
         lik = logsumexp(p,axis=0)
-        self._logj_cache = p
-        self._lik_cache = p
-        self._stale = False
         return p, lik
     
     
@@ -169,54 +167,70 @@ class GaussianMixture:
         return lik.sum()
     
     
-    def Mstep(self, pseudocounts=0.01, prior=0.1):
+    def Mstep(self, pseudocounts=0, prior=1):
         """
         Maximize the model parameters with respect to the expected
         complete log likelihood.
         """
+        
         q = self._responsibilities
         sumq = q.sum(axis=1)
-        sumq[sumq == 0] = 1.
+        if np.any(sumq == 0):
+            print "WARNING WARNING WARNING"
+            pdb.set_trace()
+            sumq[sumq == 0] = 1.
+        
         data = self._data
+        
         mu = np.dot(q, data) / sumq[:, np.newaxis]
-        if np.any(np.isnan(mu)):
-            ipdb.set_trace()
+        
+        #if np.any(np.isnan(mu)):
+        #    pdb.set_trace()
         K = q.shape[0]
+        #pdb.set_trace()
+        
+        
+        
         meansub = data[:,:,np.newaxis] - mu.T[np.newaxis,:,:]
         meansub2 = np.array(meansub)
         meansub *= q.T[:,np.newaxis,:]
+        
+        
         for cluster in xrange(K):
-            if self._updating_all() or self._update[cluster]:
-                xmmu = meansub[:,:,cluster] * q[cluster,:][:,np.newaxis]
+            if self._update[cluster]:
+                xmmu = meansub[:,:,cluster] #* q[cluster,:][:,np.newaxis]
                 xmmu2 = meansub2[:,:,cluster]
-                newsigma = np.dot(xmmu.T, xmmu2) / sumq[cluster]
+                
+                #pdb.set_trace()
+                newsigma = (np.dot(xmmu.T, xmmu2) + pseudocounts * prior * np.eye(self._D)) / (sumq[cluster] + pseudocounts)
                 if self._diagonal:
                     diag = np.diag(newsigma)
                     newsigma[:,:] = 0.
                     newsigma[xrange(self._D),xrange(self._D)] = diag
-                if pseudocounts != None:
-                    self._regularize(newsigma, pseudocounts, self._prior)
                 try:
-                    self._precision[:,:,cluster] = linalg.inv(newsigma)
+                     newprecision = linalg.inv(newsigma)
+                     self._precision[:,:,cluster] = newprecision
                 except linalg.LinAlgError:
-                    print "Failed to invert, cond=%f" % cond(newsigma)
+                    print "Failed to invert %d, cond=%f" % (cluster, linalg.cond(newsigma))
+                    pyplot.figure(2)
+                    pyplot.showmat(newsigma)
                     pass
         if self._updating_all():
             self._mu = mu
         else:
             self._mu[self._update,:] = mu[self._update,:]
+        
         self._logalpha = np.log(sumq) - np.log(sumq.sum())
         self._logalpha[np.isinf(self._logalpha)] = MIN_LOGPROB
+        # Renormalize
+        alpha = np.exp(self._logalpha)
+        self._logalpha = np.log(alpha) - np.log(np.sum(alpha))
     
-    
-    def _regularize(self, cov, weight, prior):
-        denom = (1. + weight)
-        cov *= 1. / denom
-        cov.flat[::(self._D+1)] += prior * weight / denom
     
     def plot_progress(self,Ls):
         """Plot the progress with matplotlib (if available)."""
         if pyplot:
+            pyplot.figure(2)
             pyplot.ioff()
             pyplot.clf()
             pyplot.plot(np.arange(len(Ls)),Ls)
@@ -225,6 +239,7 @@ class GaussianMixture:
             pyplot.xlabel('Iterations')
             pyplot.show()
             pyplot.ion()
+    
     
     def EM(self, thresh=1e-10, plotiter=50, reset=False, hardlimit=2000):
         """Do expectation-maximization to fit the model parameters."""
@@ -237,7 +252,7 @@ class GaussianMixture:
             except ImportError:
                 print "matplotlib not available, not plotting"
                 plotiter = None
-        self.Mstep(pseudocounts=self._pseudocounts)
+        self.Mstep()
         Ls = []
         L_old = -np.inf
         L = self.loglikelihood()
@@ -245,23 +260,39 @@ class GaussianMixture:
         while np.abs(L_old - L) > thresh and count < hardlimit:
             if plotiter != None and count > 0 and count % plotiter == 0:
                 self.plot_progress(Ls)
-        
+            
+            self._oldresponsibilities = self._responsibilities[:]
+            self._oldlogalpha = self._logalpha[:]
+            self._oldmu = self._mu[:]
+            self._oldprecision = self._precision.copy()
+            
+            print self._update
+            
             # Generate posterior over memberships
             self.Estep()
             
+            
             # Update mixture parameters
-            self.Mstep(pseudocounts=self._pseudocounts)
+            self.Mstep()
+            
+            print ((self._precision - self._oldprecision)**2).sum(axis=0).sum(axis=0)
             
             L_old = L
             L = self.loglikelihood()
             
             if len(Ls) > 0 and L < L_old and not np.allclose(L, L_old):
                 print "Likelihood went down!"
+                pdb.set_trace()
             
             count += 1
             print "%5d: L = %10.5f" % (count,L)
+            self.display()
+            if L > 0:
+                pass
+                #pdb.set_trace()
             Ls.append(L)
         return Ls
+    
     
     def save(self,filename):
         np.savez(filename, K=np.array(self._K),N=np.array(self._N),
@@ -269,6 +300,22 @@ class GaussianMixture:
             logalpha=self._logalpha, diagonal=np.array(self._diagonal),
             AIC=np.array(self.AIC()), BIC=np.array(self.BIC()),
             update=self._update)
+    
+    def display(self):
+        pyplot.ioff()
+        pyplot.figure(1)
+        pyplot.clf()
+        r = c = np.ceil(np.sqrt(self._K))
+        for ii in range(self._K):    
+            pyplot.subplot(r,c,ii+1)
+            pyplot.matshow(self._precision[:,:,ii],fignum=False)
+            pyplot.title('Precision for component %d' % ii, fontsize='small')
+            pyplot.colorbar()
+        pyplot.subplot(r,c,self._K+1)
+        pyplot.bar(bottom=np.zeros(self._K),left=np.arange(1,self._K+1)-0.5,
+            height=np.exp(self._logalpha),width=1)
+        pyplot.show()
+        pyplot.ion()
     
 
 class GaussianMixtureWithGarbageModel(GaussianMixture):
