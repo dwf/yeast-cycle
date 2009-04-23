@@ -5,9 +5,9 @@ import numpy.random as random
 import pdb
 
 FINFO = np.finfo(np.float64)
-MIN_LOGPROB = FINFO.min
-MIN_POSTERIOR = FINFO.tiny
-MIN_LOG = np.log(MIN_POSTERIOR)
+MIN_PROB = FINFO.tiny
+MIN_LOGPROB = np.log(MIN_PROB)
+
 LOOKBACK = 5
 DEBUG_LIKELIHOOD_DECREASE = False
 
@@ -62,27 +62,37 @@ class GaussianMixture:
         Constructor. 
         Add real documentation.
         """
+        # We use these a lot below, so cache them for readability
+        ntrain, ndim = data.shape
+        
         self._data = data
         self._pseudocounts = pseudocounts
         
+        # Handle the 'update' array, which tells us whether or not we 
+        # update a given component's parameters by M-step estimation.
         if update == None:
             self._update = np.ones((ncomponent, ), dtype=bool)
         elif len(update) != ncomponent:
-            raise ValueError("'update' argument must be K elements long")
+            raise ValueError("len(update) must be equal to ncomponent")
         else:
             self._update = np.asarray(update, dtype=bool)
         
         # Make space for our model parameters
-        means = np.empty((ncomponent, self._ndim()))
-        precision = np.empty((self._ndim(), self._ndim(), ncomponent))
+        means = np.empty((ncomponent, ndim))
+        precision = np.empty((ndim, ndim, ncomponent))
         memberships = np.empty((ncomponent))
+        resp = np.empty((ncomponent, ntrain))
+        
         # Initialize them
         self._logalpha = memberships
         self._precision = precision
         self._means = means
-        self._resp = np.empty((ncomponent, self._ntrain()))
+        self._resp = resp
         
-        # Saving last iteration parameters for debugging
+        # Store the training data mean for pseudocount shrinkage
+        self._trainmean = np.mean(self._data)
+        
+        # For saving last iteration parameters for debugging
         self._oldmeans, self._oldprecision, self._oldlogalpha = \
             None, None, None
         self._oldresponsibilities = None
@@ -124,12 +134,12 @@ class GaussianMixture:
     
     def aic(self):
         """Akaike information criterion for the current model fit."""
-        return 2 * self._numparams - 2 * self.loglikelihood()
+        return 2 * self._numparams() - 2 * self.loglikelihood()
     
     
     def bic(self):
         """Bayesian information criterion for the current model fit."""
-        params = self._numparams
+        params = self._numparams()
         ntrain = self._ntrain()
         return -2 * self.loglikelihood() +  params * np.log(ntrain)
     
@@ -181,7 +191,7 @@ class GaussianMixture:
         """
         logjoint, lik = self._logjoint()
         logresp = logjoint - lik
-        logresp[logresp < MIN_LOG] = MIN_LOG
+        logresp[logresp < MIN_LOGPROB] = MIN_LOGPROB
         self._resp = np.exp(logresp)
     
     
@@ -198,47 +208,12 @@ class GaussianMixture:
         Maximize the model parameters with respect to the expected
         complete log likelihood.
         """        
-        resp = self._resp
-        sumresp = resp.sum(axis=1)
-        data = self._data
         
         self._m_step_update_means()
-                
-        means = self._means
         
-        meansub = data[:, :, np.newaxis] - means.T[np.newaxis, :, :]
-        meansub2 = np.array(meansub)
-        meansub *= resp.T[:, np.newaxis, :]
+        self._m_step_update_precisions()
         
-        for clust in xrange(self._ncomponent()):
-            if self._update[clust]:
-                xmmu = meansub[:, :, clust]
-                xmmu2 = meansub2[:, :, clust]
-                #  Optimize pseudocount addition
-                newsigma = (np.dot(xmmu.T, xmmu2) + \
-                    self._pseudocounts * \
-                    np.eye(self._ndim())) / \
-                    (sumresp[clust] + self._pseudocounts)
-                #newsigma = 0.5*(newsigma + newsigma.T)
-                try:
-                    newprecision = linalg.inv(newsigma)
-                    if np.isnan(np.log(linalg.det(newprecision))) or \
-                    np.isinf(np.log(linalg.det(newprecision))):
-                        print "NEW PRECISION DETERMINANT:" + \
-                            str(linalg.det(newprecision))
-                    else:
-                        self._precision[:, :, clust] = newprecision
-                except linalg.LinAlgError:
-                    print "Failed to invert %d, cond=%f" % (clust,
-                        linalg.cond(newsigma))
-                    pyplot.figure(2)
-                    pyplot.matshow(newsigma)
-        
-        self._logalpha = np.log(sumresp) - np.log(sumresp.sum())
-        self._logalpha[np.isinf(self._logalpha)] = MIN_LOGPROB
-        # Renormalize
-        alpha = np.exp(self._logalpha)
-        self._logalpha = np.log(alpha) - np.log(np.sum(alpha))
+        self._m_step_update_logalpha()
     
     
     def _m_step_update_means(self):
@@ -255,6 +230,51 @@ class GaussianMixture:
             self._means[:, :] = means
         else:
             self._means[self._update, :] = means[self._update, :]
+    
+    
+    def _m_step_update_precisions(self):
+        """Do the M-step update for the precisions (inverse covariances)."""
+        resp = self._resp
+        sumresp = resp.sum(axis=1)
+        means = self._means
+        meansub = self._data[:, :, np.newaxis] - means.T[np.newaxis, :, :]
+        meansub2 = np.array(meansub)
+        meansub *= self._resp.T[:, np.newaxis, :]
+        for clust in xrange(self._ncomponent()):
+            if self._update[clust]:
+                xmmu = meansub[:, :, clust]
+                xmmu2 = meansub2[:, :, clust]
+                #  TODO: Optimize pseudocount addition
+                newsigma = (np.dot(xmmu.T, xmmu2) + \
+                    self._pseudocounts * \
+                    np.eye(self._ndim())) / \
+                    (sumresp[clust] + self._pseudocounts)
+                try:
+                    newprecision = linalg.inv(newsigma)
+                    if np.isnan(np.log(linalg.det(newprecision))) or \
+                    np.isinf(np.log(linalg.det(newprecision))):
+                        print "NEW PRECISION DETERMINANT:" + \
+                            str(linalg.det(newprecision))
+                    else:
+                        self._precision[:, :, clust] = newprecision
+                except linalg.LinAlgError:
+                    print "Failed to invert %d, cond=%f" % (clust,
+                        linalg.cond(newsigma))
+                    pyplot.figure(2)
+                    pyplot.matshow(newsigma)
+    
+    
+    def _m_step_update_logalpha(self):
+        """Do the M-step update for the log prior."""
+        sumresp = self._resp.sum(axis=1)
+        self._logalpha = np.log(sumresp) - np.log(sumresp.sum())
+        
+        # Any infinite quantities
+        self._logalpha[np.isinf(self._logalpha)] = MIN_LOGPROB
+        
+        # Renormalize
+        alpha = np.exp(self._logalpha)
+        self._logalpha = np.log(alpha) - np.log(np.sum(alpha))
     
     
     def EM(self, thresh=1e-10, plotiter=50, hardlimit=2000):
@@ -369,5 +389,4 @@ class DiagonalGaussianMixture(GaussianMixture):
         """M-step for a diagonal Gaussian  model."""
         GaussianMixture.m_step(self)
         #for clust in xrange(self._ncomponent()):
-        pass
     
