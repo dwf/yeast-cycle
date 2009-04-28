@@ -225,7 +225,17 @@ class GaussianMixture:
             print "WARNING: A cluster got assigned 0 responsibility."
             sumresp[sumresp == 0] = 1.
         data = self._data
-        means = np.dot(resp, data) / sumresp[:, np.newaxis]
+        num = np.dot(resp, data)
+        den = sumresp[:, np.newaxis]
+        
+        if self._pseudocounts > 0:
+            self._num += self._pseudocounts * self._trainmean[:, np.newaxis]
+            self._den += self._pseudocounts
+        
+        # This should avoid copying while doing the division
+        means = num
+        means /= den
+        
         if self._updating_all():
             self._means[:, :] = means
         else:
