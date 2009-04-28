@@ -47,7 +47,7 @@ def plot_progress(lhistory):
         pyplot.figure(2)
         pyplot.ioff()
         pyplot.clf()
-        pyplot.plot(np.arange(len(lhistory)), lhistory)
+        pyplot.plot(xrange(len(lhistory)), lhistory)
         pyplot.title('Log likelihood vs. iterations')
         pyplot.ylabel('Log likelihood')
         pyplot.xlabel('Iterations')
@@ -344,16 +344,19 @@ class GaussianMixture:
             rows = cols = np.ceil(np.sqrt(self._ncomponent()))
             if rows * cols == self._ncomponent():
                 rows = rows + 1
-            for clust in range(self._ncomponent()):    
+            
+            for clust in xrange(self._ncomponent()):    
                 pyplot.subplot(rows, cols, clust+1)
                 pyplot.matshow(self._precision[:, :, clust], fignum=False)
                 pyplot.title('Precision for %s component %d' % (name, clust),
                     fontsize='small')
                 pyplot.colorbar()
+            
             pyplot.subplot(rows, cols, self._ncomponent()+1)
-            pyplot.bar(bottom=np.zeros(self._ncomponent()), left=np.arange(1, 
+            pyplot.bar(bottom=np.zeros(self._ncomponent()), left=xrange(1, 
                 self._ncomponent()+1)-0.5, height=np.exp(self._logalpha),
                     width=1)
+            
             pyplot.show()
             pyplot.ion()
     
