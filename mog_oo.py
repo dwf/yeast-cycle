@@ -90,7 +90,7 @@ class GaussianMixture:
         self._resp = resp
         
         # Store the training data mean for pseudocount shrinkage
-        self._trainmean = np.mean(self._data)
+        self._trainmean = np.mean(self._data,axis=0)
         
         # For saving last iteration parameters for debugging
         self._oldmeans, self._oldprecision, self._oldlogalpha = \
@@ -120,8 +120,8 @@ class GaussianMixture:
         """Return the number of free parameters in the model."""
         covparams = self._ndim() * (self._ndim() + 1) / 2.
         meanparams = self._ndim()
-        return self._ncomponent() * (covparams + meanparams + \
-            (self._ncomponent() - 1))
+        return self._ncomponent() * (covparams + meanparams) + \
+            (self._ncomponent() - 1)
     
      
     def _updating_all(self):
@@ -229,8 +229,8 @@ class GaussianMixture:
         den = sumresp[:, np.newaxis]
         
         if self._pseudocounts > 0:
-            self._num += self._pseudocounts * self._trainmean[:, np.newaxis]
-            self._den += self._pseudocounts
+            num += self._pseudocounts * self._trainmean[np.newaxis, :]
+            den += self._pseudocounts
         
         # This should avoid copying while doing the division
         means = num
@@ -287,7 +287,7 @@ class GaussianMixture:
         self._logalpha = np.log(alpha) - np.log(np.sum(alpha))
     
     
-    def EM(self, thresh=1e-10, plotiter=50, hardlimit=2000):
+    def EM(self, thresh=1e-6, plotiter=50, hardlimit=2000):
         """Do expectation-maximization to fit the model parameters."""
         self.m_step()
         lhistory = []
@@ -363,7 +363,7 @@ class GaussianMixture:
                 pyplot.colorbar()
             
             pyplot.subplot(rows, cols, self._ncomponent()+1)
-            pyplot.bar(bottom=np.zeros(self._ncomponent()), left=xrange(1, 
+            pyplot.bar(bottom=np.zeros(self._ncomponent()), left=np.arange(1, 
                 self._ncomponent()+1)-0.5, height=np.exp(self._logalpha),
                     width=1)
             
@@ -398,8 +398,33 @@ class DiagonalGaussianMixture(GaussianMixture):
     A Gaussian mixture model that has one extra component with parameters
     equal to the mean and covariance of the data and is fixed.
     """
-    def m_step(self):
-        """M-step for a diagonal Gaussian  model."""
-        GaussianMixture.m_step(self)
-        #for clust in xrange(self._ncomponent()):
+    def _m_step_update_precisions(self):
+        """Do the M-step update for the precisions (inverse covariances)."""
+        resp = self._resp
+        sumresp = resp.sum(axis=1)
+        means = self._means
+        meansub = self._data[:, :, np.newaxis] - means.T[np.newaxis, :, :]
+        meansub2 = np.array(meansub)
+        meansub *= self._resp.T[:, np.newaxis, :]
+        for clust in xrange(self._ncomponent()):
+            if self._update[clust]:
+                xmmu = meansub[:, :, clust]
+                xmmu2 = meansub2[:, :, clust]
+                newsigma = ((xmmu * xmmu2).sum(axis=0) + \
+                    self._pseudocounts) / (sumresp[clust] + \
+                    self._pseudocounts)
+                newprec = newsigma # No copy
+                newprec **= -1. # Invert
+                if np.any(np.isnan(newprec)) or np.any(np.isinf(newprec)): 
+                    print "WARNING: Zero div updating precision %d" % clust
+                else:
+                    self._precision[:, :, clust] = np.diag(newprec)
+    
+    
+    def _numparams(self):
+        """Return the number of free parameters in the model."""
+        covparams = self._ndim()
+        meanparams = self._ndim()
+        return self._ncomponent() * (covparams + meanparams) + \
+            (self._ncomponent() - 1)
     

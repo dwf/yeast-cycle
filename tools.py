@@ -18,7 +18,6 @@ import matplotlib.font_manager as font
 
 
 import pdb
-import mog_em
 
 class ImageEmptyError(ValueError):
     pass
@@ -41,7 +40,7 @@ def imread_binary(*kw, **args):
     
     """
     im = PIL.Image.open(*kw, **args)
-    return matplotlib.image.pil_to_array(im)[:,:,0:3].sum(axis=2) > 0
+    return np.float64(matplotlib.image.pil_to_array(im)[:,:,0])
 
 def fit_ellipse(x,y):
     """
@@ -113,7 +112,7 @@ def generate_spline(data, nknots, order=3):
     #print "Sum of squared residuals: %e" % fp
     return tck
 
-def spline_features(obj,axisknots=5,widthknots=5,order=3,plot=False):
+def spline_features(obj,axisknots=3,widthknots=3,order=4,plot=False):
     axis_splines = []
     width_splines = []
     medial_lengths = []
@@ -172,7 +171,7 @@ def spline_features(obj,axisknots=5,widthknots=5,order=3,plot=False):
     return np.concatenate((width_spline, axis_spline, [medial_length]))
 
 
-def aligned_objects_from_im(sil, locations, ids):
+def aligned_objects_from_im(sil, locations, ids, plot=False):
     """
     Generator that processes each object in a binary threshold image.
     Yields an image of the object rotated to align to the best fit ellipse,
@@ -232,7 +231,7 @@ def aligned_objects_from_im(sil, locations, ids):
                 bounds = ndimage.find_objects(rotated > 0)[0]
             except IndexError, e:
                 pass
-            height, width = np.shape(rotated[bounds])
+            height, width = np.shape(rotated[bounds])            
             if width > height:
                 angle -= 90.0
                 rotated = ndimage.rotate(im, angle)
@@ -243,7 +242,7 @@ def aligned_objects_from_im(sil, locations, ids):
             key = "obj_"+str(ids[ii,0])+str(ids[ii,1])
             found_objects[key] = obj = rotated[bounds]
             try:
-                features.append(spline_features(obj)[np.newaxis,:])
+                features.append(spline_features(obj,plot=plot)[np.newaxis,:])
                 db_obj_accounted_for.append(ii)
             except ObjectTooSmallError, e:
                 pass
@@ -264,8 +263,7 @@ def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
     #    pbar.Bar(), ' ', pbar.ETA()]
     #pb = pbar.ProgressBar(maxval=len(iterable_locs), widgets=widg).start()
     #count = 0
-    print type(ids)
-
+    
     allobjects = []
     allids = []
     for image in iterable_locs:
@@ -274,7 +272,7 @@ def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
         im = imread_binary(os.path.join(path,prefix+imroot+suffix))
         im_locs = locs[image]
         im_ids = ids[image]
-        objects, newids = aligned_objects_from_im(im,im_locs,im_ids)
+        objects, newids = aligned_objects_from_im(im,im_locs,im_ids,plot=plot)
         #count += 1
         allobjects.append(objects)
         allids.append(newids)
