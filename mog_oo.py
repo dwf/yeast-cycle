@@ -156,12 +156,14 @@ class GaussianMixture:
         self._resp = fakeposterior
     
     
-    def log_probs(self, clust):
+    def log_probs(self, clust, data=None):
         """
         Log probability of each training data point under a particular
         mixture component.
         """
-        centered = self._data - self._means[clust, :][np.newaxis, :]
+        if data == None:
+            data = self._data
+        centered = data - self._means[clust, :][np.newaxis, :]
         ndim = self._ndim()
         logphat = -0.5 * (centered * np.dot(centered,
             self._precision[:, :, clust])).sum(axis=1)
@@ -170,7 +172,7 @@ class GaussianMixture:
         return logphat - lognormalizer
     
     
-    def _logjoint(self):
+    def _logjoint(self, data=None):
         """
         Function that computes the log joint probability of each training
         example.
@@ -178,7 +180,7 @@ class GaussianMixture:
         logalpha = self._logalpha
         condprobs = np.nan * np.zeros((self._ncomponent(), self._ntrain()))
         for clust in xrange(self._ncomponent()):
-            condprobs[clust, :] = self.log_probs(clust)
+            condprobs[clust, :] = self.log_probs(clust, data)
         condprobs += logalpha[:, np.newaxis]
         lik = logsumexp(condprobs, axis=0)
         return condprobs, lik
