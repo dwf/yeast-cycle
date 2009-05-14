@@ -3,6 +3,7 @@ import numpy as np
 import numpy.linalg as linalg
 import numpy.random as random
 import pdb
+import sys
 
 FINFO = np.finfo(np.float64)
 MIN_PROB = FINFO.tiny
@@ -39,6 +40,11 @@ def logsumexp(logx, axis=-1):
         xmax = logx.max(lastdim)
         return xmax + np.log(np.sum(np.exp( logx-xmax[..., np.newaxis]),
             lastdim))
+
+
+def print_now(s):
+    print s
+    sys.stdout.flush()
 
 
 def plot_progress(lhistory):
@@ -178,7 +184,11 @@ class GaussianMixture:
         example.
         """
         logalpha = self._logalpha
-        condprobs = np.nan * np.zeros((self._ncomponent(), self._ntrain()))
+        if data != None:
+            numpts = data.shape[0]
+        else:
+            numpts = self._ntrain()
+        condprobs = np.nan * np.zeros((self._ncomponent(), numpts))
         for clust in xrange(self._ncomponent()):
             condprobs[clust, :] = self.log_probs(clust, data)
         condprobs += logalpha[:, np.newaxis]
@@ -224,7 +234,7 @@ class GaussianMixture:
         data = self._data
         sumresp = resp.sum(axis=1)
         if np.any(sumresp == 0):
-            print "WARNING: A cluster got assigned 0 responsibility."
+            print_now("WARNING: A cluster got assigned 0 responsibility.")
             sumresp[sumresp == 0] = 1.
         data = self._data
         num = np.dot(resp, data)
@@ -265,13 +275,13 @@ class GaussianMixture:
                     newprecision = linalg.inv(newsigma)
                     if np.isnan(np.log(linalg.det(newprecision))) or \
                     np.isinf(np.log(linalg.det(newprecision))):
-                        print "NEW PRECISION DETERMINANT:" + \
-                            str(linalg.det(newprecision))
+                        print_now("NEW PRECISION DETERMINANT:" + \
+                            str(linalg.det(newprecision)))
                     else:
                         self._precision[:, :, clust] = newprecision
                 except linalg.LinAlgError:
-                    print "Failed to invert %d, cond=%f" % (clust,
-                        linalg.cond(newsigma))
+                    print_now("Failed to invert %d, cond=%f" % (clust,
+                        linalg.cond(newsigma)))
                     pyplot.figure(2)
                     pyplot.matshow(newsigma)
     
@@ -315,7 +325,7 @@ class GaussianMixture:
             lcurr = self.loglikelihood()
             
             if lcurr < lprev:
-                print "Likelihood went down!"
+                print_now("Likelihood went down!")
                 if DEBUG_LIKELIHOOD_DECREASE:
                     self.display(name="OLD", figurenum=3,
                         precision=self._oldprecision, 
@@ -324,7 +334,7 @@ class GaussianMixture:
                     pdb.set_trace()
             
             count += 1
-            print "%5d: L = %10.5f" % (count, lcurr)
+            print_now("%5d: L = %10.5f" % (count, lcurr))
             lhistory.append(lcurr)
         return lhistory
     
@@ -418,7 +428,8 @@ class DiagonalGaussianMixture(GaussianMixture):
                 newprec = newsigma # No copy
                 newprec **= -1. # Invert
                 if np.any(np.isnan(newprec)) or np.any(np.isinf(newprec)): 
-                    print "WARNING: Zero div updating precision %d" % clust
+                    print_now("WARNING: Zero div updating precision %d" \
+                    % clust)
                 else:
                     self._precision[:, :, clust] = np.diag(newprec)
     

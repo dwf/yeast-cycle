@@ -17,7 +17,12 @@ import matplotlib.legend as mlegend
 import matplotlib.font_manager as font
 
 
-import pdb
+import wx
+from enthought.traits.api import HasTraits, Range, Instance, Int
+from enthought.traits.ui.api import View, Item, RangeEditor
+from embedded_figure import MPLFigureEditor
+from matplotlib.figure import Figure
+
 
 class ImageEmptyError(ValueError):
     pass
@@ -29,9 +34,6 @@ class ObjectTooSmallError(ValueError):
     pass
 
 
-_ellipse_cstrt = np.zeros((6,6))
-_ellipse_cstrt[2,0] = -2; _ellipse_cstrt[0,2] = -2; _ellipse_cstrt[1,1] =  1
-    
 def imread_binary(*kw, **args):
     """
     Reads in a binary PNG image with PIL.
@@ -40,7 +42,12 @@ def imread_binary(*kw, **args):
     
     """
     im = PIL.Image.open(*kw, **args)
-    return np.float64(matplotlib.image.pil_to_array(im)[:,:,0])
+    return matplotlib.image.pil_to_array(im)[:,:,0] == 255
+
+
+_ellipse_cstrt = np.zeros((6,6))
+_ellipse_cstrt[2,0] = -2; _ellipse_cstrt[0,2] = -2; _ellipse_cstrt[1,1] =  1
+
 
 def fit_ellipse(x,y):
     """
@@ -112,39 +119,35 @@ def generate_spline(data, nknots, order=3):
     #print "Sum of squared residuals: %e" % fp
     return tck
 
-def spline_features(obj,axisknots=3,widthknots=3,order=4,plot=False):
+def spline_features(obj,axisknots=3,widthknots=3,order=4,plot=False,fig=None):
     axis_splines = []
     width_splines = []
     medial_lengths = []
     count = 0
     if plot:
-        pyplot.ioff()
-        pyplot.figure(1)
-        pyplot.clf()
-        pyplot.subplot(211)
-        pyplot.imshow(obj.T)
-        pyplot.axis('off')
-        pyplot.title('Aligned object #%d' % count, fontsize='small')
-        
+        axes = fig.axes[0]
+        axes.clear()
+        axes.axis('off')
+        axes.matshow((obj.T),cmap=matplotlib.cm.bone)
+    
     med, width = medial_axis_representation(obj)
     if len(med) <= order or len(med) <= axisknots:
        	raise ObjectTooSmallError()
     if plot:
-        pyplot.subplot(212)
-        pyplot.plot(np.mgrid[0:1:(len(med)*1j)],med,label='Medial axis')
-        pyplot.plot(np.mgrid[0:1:(len(width)*1j)],width,label='Width')
-        pyplot.legend(prop=font.FontProperties(size='x-small'))
-        pyplot.title('Medial axis representation for object #%d'%count, \
-            fontsize='small')
-        pyplot.show()
-        pyplot.ion()
-    
+        axes = fig.axes[1]
+        axes.clear()
+        axes.plot(np.mgrid[0:1:(len(med)*1j)],med,label='Medial axis')
+        axes.plot(np.mgrid[0:1:(len(width)*1j)],width,label='Width')
+        axes.legend(prop=font.FontProperties(size='x-small'))
+        if hasattr(fig.canvas, 'draw'):
+            wx.CallAfter(fig.canvas.draw)
+        
     dep_var = np.mgrid[0:1:500j]
     med_tck = generate_spline(med, nknots=axisknots, order=order)
     
     if plot:
         medsplinevalues = interp.splev(dep_var, med_tck)
-        pyplot.plot(dep_var, medsplinevalues,
+        axes.plot(dep_var, medsplinevalues,
             label='Medial axis spline fit')
         
     width_tck = generate_spline(width, nknots=widthknots,order=order)
@@ -153,15 +156,13 @@ def spline_features(obj,axisknots=3,widthknots=3,order=4,plot=False):
     
     if plot:
         widthsplinevalues = interp.splev(dep_var, width_tck)
-        pyplot.ioff()
-        pyplot.plot(dep_var, widthsplinevalues, 
+        axes.plot(dep_var, widthsplinevalues, 
             label='Width curve spline fit')
-        pyplot.legend(prop=font.FontProperties(size='x-small'))
-        pyplot.show()
-        pyplot.title('Spline fits for object #%d' % count, \
-            fontsize='small')
-        pyplot.ion()
-        raw_input()
+        reconstruct_values = interp.splev(dep_var, (width_tck[0], np.concatenate((width_tck[1][:-4],np.zeros(4))), width_tck[2]))
+        axes.plot(dep_var, reconstruct_values, label='Reconstruction')
+        axes.legend(prop=font.FontProperties(size='x-small'))
+        #pyplot.title('Spline fits for object' % count, \
+        #    fontsize='small')
     # Why up to -4? Because these are always zero, for some reason,
     # for our purposes.
     width_spline = width_tck[1][:-4]
@@ -171,7 +172,7 @@ def spline_features(obj,axisknots=3,widthknots=3,order=4,plot=False):
     return np.concatenate((width_spline, axis_spline, [medial_length]))
 
 
-def aligned_objects_from_im(sil, locations, ids, plot=False):
+def aligned_objects_from_im(sil, locations, ids, fn, plot=False):
     """
     Generator that processes each object in a binary threshold image.
     Yields an image of the object rotated to align to the best fit ellipse,
@@ -181,72 +182,123 @@ def aligned_objects_from_im(sil, locations, ids, plot=False):
     # Reverse rows
     sil = sil[::-1]
     
-    sil = ndimage.binary_fill_holes(sil)
+    #sil = ndimage.binary_fill_holes(sil)
     
+    # labels is an array indicating what pixels belong to which object
     labels, numfound = ndimage.label(sil)
+    
+    # List of slices indexing the different objects.
     objects = ndimage.find_objects(labels)
-    #found = np.zeros((numfound+1,), dtype=bool)
+    
     db_obj_accounted_for = []
     found_objects = {}
     features = []
-    
-    for ii in xrange(len(locations)):
-        # Rows and columns are y and x, respectively, so we reverse x and y
-        # after rounding to nearest
+            
+    def process_item(ii, append=False, figure=None):
+        # Get a tuple of rounded-to-nearest pixel locations
         gridpos = tuple([int(round(a)) for a in locations[ii]][::-1])
-        #gridpos = (labels.shape[0] - gridpos[0], gridpos[1])
+        
+        # Get the number from the label array at that grid position
         labelnumber = labels[gridpos]
-        #pdb.set_trace()
-        #found[labelnumber] = True
-        #pyplot.plot([gridpos[1]],[gridpos[0]],'o')
+        
+        # If it's a background pixel, check the neighbourhood.
         if labelnumber == 0:
             row,col = gridpos
             neighb = labels[(row-3):(row+3), (col-3):(col+3)]
+            # If everybody's 0 in the -3+3 neighbourhood, report it and move on
             if np.all(neighb == 0):
                 print >>sys.stderr, "[e] Label # missing im #%d, obj #%d" % \
                     tuple(ids[ii])
-                #pyplot.clf()
-                #pyplot.imshow(sil)
-                #pyplot.plot([gridpos[1]],[gridpos[0]],'yx')
-                #missing.append(ii)
+            
+            # Otherwise, take the most frequently occurring label in that 
+            # neighbourhood
             else:
                 u, s = zip(*[(u, np.sum(neighb == u)) for u in \
                     np.unique(neighb)])
                 labelnumber = u[np.argsort(s)[-1]]
+        
+        # Grab this part of the silhouette
         im = labels[objects[labelnumber-1]] == labelnumber
-        #pdb.set_trace()
+        
+        # Fit an ellipse using every nonzero pixel location in the image.
         coeffs = fit_ellipse(*(np.where(im)))
+        
         if coeffs.size != 6:
             print >>sys.stderr, "[e] Ellipse fit im #%d, obj #%d" % \
                 tuple(ids[ii])
-            #missing.append(ii)
-            continue
+            return
         else:
             a,b,c,d,e,f = coeffs
         preangle = b / (a - c)
+        
         if not np.isinf(preangle):
             angle = radians_to_degrees(-0.5 * np.arctan(preangle))
-            rotated = ndimage.rotate(np.float64(im),angle)
-            try:
-                bounds = ndimage.find_objects(rotated > 0)[0]
-            except IndexError, e:
-                pass
-            height, width = np.shape(rotated[bounds])            
-            if width > height:
-                angle -= 90.0
-                rotated = ndimage.rotate(im, angle)
-                try:
-                    bounds = ndimage.find_objects(rotated > 0)[0]
-                except IndexError, e:
-                    pass
-            key = "obj_"+str(ids[ii,0])+str(ids[ii,1])
-            found_objects[key] = obj = rotated[bounds]
-            try:
-                features.append(spline_features(obj,plot=plot)[np.newaxis,:])
+            old_angle = angle
+            # Order = 0 prevents interpolation from being done and screwing 
+            # with our object boundaries.
+            rotated = ndimage.rotate(im, angle, order=0)
+            height, width = rotated[ndimage.find_objects(rotated)[0]].shape
+        else:
+            angle = 0.
+            old_angle = 0.
+        
+        if width > height:
+            angle -= 90.0
+            rotated = ndimage.rotate(im, angle, order=0)
+        
+        # Correct so that in budding cells, the "major" hump is always
+        # on the first.          
+        if np.argmax(rotated.sum(axis=1)) > rotated.shape[0] // 2:
+            angle -= 180.0
+            rotated = ndimage.rotate(im, angle, order=0)
+        
+        # Do a find_objects on the resultant array after rotation in 
+        # order to _just_ get the object and not any of the extra 
+        # space that's been added.
+        try:
+            bounds = ndimage.find_objects(rotated)[0]
+        except IndexError, e:
+            pass
+        
+        key = "obj_" + str(ids[ii,0])+str(ids[ii,1])
+        found_objects[key] = obj = rotated[bounds]
+        try:
+            these_features = spline_features(obj,plot=plot,
+                    fig=figure)
+            if append:
+                features.append(these_Features[:,np.newaxis])
                 db_obj_accounted_for.append(ii)
-            except ObjectTooSmallError, e:
-                pass
-    return np.concatenate(features,axis=0), ids[db_obj_accounted_for]
+        except ObjectTooSmallError, e:
+            pass
+    
+    if plot:
+        class InteractiveViewer(HasTraits):
+            figure = Instance(Figure, ())
+            viewed_item = Int(0, min=0, max=(len(locations) - 1))
+            view = View(Item('figure', editor=MPLFigureEditor(),
+                             show_label=False), 
+                              Item('viewed_item',
+                             editor=RangeEditor(high=len(locations)-1,
+                             low=0),show_label=False),
+                             width=700,
+                             height=600,
+                             resizable=True, title=fn)
+            def __init__(self):
+                super(InteractiveViewer, self).__init__()
+                axes1 = self.figure.add_subplot(211)
+                axes2 = self.figure.add_subplot(212)
+                
+            
+            def _viewed_item_changed(self):
+                process_item(self.viewed_item, 
+                    append=False, figure=self.figure)
+        InteractiveViewer().configure_traits()
+    #else:
+    #    for ii in xrange(len(locations)):
+    #        process_item(ii, append=True)
+    
+    #return np.concatenate(features,axis=0), ids[db_obj_accounted_for]
+
 
 def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
     suffix='_binary.png',  plot=False):
@@ -272,39 +324,22 @@ def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
         im = imread_binary(os.path.join(path,prefix+imroot+suffix))
         im_locs = locs[image]
         im_ids = ids[image]
-        objects, newids = aligned_objects_from_im(im,im_locs,im_ids,plot=plot)
+        print prefix+imroot+suffix
+        if plot:
+            aligned_objects_from_im(im,im_locs,im_ids,image,plot=plot)
+            print "Hit enter for next image."
+        else:
+            objects, newids = aligned_objects_from_im(im,im_locs,im_ids,image,
+                plot=plot)
         #count += 1
-        allobjects.append(objects)
-        allids.append(newids)
+        if not plot:
+            allobjects.append(objects)
+            allids.append(newids)
         #pb.update(count)
-    allobjects = np.concatenate(allobjects,axis=0)
-    allids = np.concatenate(allids,axis=0)
-    return allobjects, allids
-    #pb.finish()
-    # data = []
-    
-    # import progressbar as pbar
-    # widg = widgets=[pbar.RotatingMarker(), ' ', pbar.Percentage(),' ', \
-    #     pbar.Bar(), ' ', pbar.ETA()]
-    # pb = pbar.ProgressBar(maxval=len(files), widgets=widg).start()
-    # 
-    # count = 0
-    # for fn, image in load_silhouettes(files):
-    #     try:
-    #         widths, axes, lengths = process_all(image, plot=plot)
-    #     except ImageEmptyError, e:
-    #         #print >> sys.stderr, "%s contained nothing" % fn
-    #         #print >> sys.stderr, str(type(e)), str(e)
-    #         continue
-    #     #print np.shape(widths)
-    #     #print np.shape(axes)
-    #     #print np.shape(lengths)
-    #     bigmat = np.concatenate((widths,axes,lengths[np.newaxis,:]),axis=0)
-    #     data.append(bigmat)
-    #     count += 1
-    #     pb.update(count)
-    # pb.finish()
-    # return np.concatenate(data,axis=1)
+    if not plot:
+        allobjects = np.concatenate(allobjects,axis=0)
+        allids = np.concatenate(allids,axis=0)
+        return allobjects, allids
 
 
 def coef2knots(x):
@@ -327,9 +362,11 @@ def unmix_and_sample(params,meandata,stddata,k=3,component=None):
 
 
 def plot_from_spline(tck, samples=500, *args, **kwds):
+    print len(tck[0])
+    print len(tck[1])
     dep_var = np.mgrid[0:1:(samples * 1j)]
     splval = interp.splev(dep_var, tck)
-    #pyplot.plot(dep_var,splval,*args,**kwds)
+    pyplot.plot(dep_var,splval,*args,**kwds)
 
 def sample_plots(params,meandata,stddata,subplotsize,nsamp):
     pyplot.ioff()
@@ -385,3 +422,10 @@ def cells_in_database_per_imagefile(datafiles, headerfile=None):
         cells[image] = locations
         allids[image] = ids
     return cells, allids
+
+if __name__ == "__main__":
+    import sys
+    if sys.argv[1] == "plot":
+        locs = np.load('/Users/dwf/locations.npz')
+        ids = np.load('/Users/dwf/ids.npz')
+        load_and_process('/Users/dwf/data/binary', locs, ids,plot=True)
