@@ -17,12 +17,6 @@ import matplotlib.legend as mlegend
 import matplotlib.font_manager as font
 
 
-import wx
-from enthought.traits.api import HasTraits, Range, Instance, Int
-from enthought.traits.ui.api import View, Item, RangeEditor
-from embedded_figure import MPLFigureEditor
-from matplotlib.figure import Figure
-
 
 class ImageEmptyError(ValueError):
     pass
@@ -161,8 +155,6 @@ def spline_features(obj,axisknots=3,widthknots=3,order=4,plot=False,fig=None):
         reconstruct_values = interp.splev(dep_var, (width_tck[0], np.concatenate((width_tck[1][:-4],np.zeros(4))), width_tck[2]))
         axes.plot(dep_var, reconstruct_values, label='Reconstruction')
         axes.legend(prop=font.FontProperties(size='x-small'))
-        #pyplot.title('Spline fits for object' % count, \
-        #    fontsize='small')
     # Why up to -4? Because these are always zero, for some reason,
     # for our purposes.
     width_spline = width_tck[1][:-4]
@@ -194,7 +186,7 @@ def aligned_objects_from_im(sil, locations, ids, fn, plot=False):
     found_objects = {}
     features = []
             
-    def process_item(ii, append=False, figure=None):
+    def process_item(sil, ii, append=False, figure=None):
         # Get a tuple of rounded-to-nearest pixel locations
         gridpos = tuple([int(round(a)) for a in locations[ii]][::-1])
         
@@ -270,34 +262,6 @@ def aligned_objects_from_im(sil, locations, ids, fn, plot=False):
                 db_obj_accounted_for.append(ii)
         except ObjectTooSmallError, e:
             pass
-    
-    if plot:
-        class InteractiveViewer(HasTraits):
-            figure = Instance(Figure, ())
-            viewed_item = Int(0, min=0, max=(len(locations) - 1))
-            view = View(Item('figure', editor=MPLFigureEditor(),
-                             show_label=False), 
-                              Item('viewed_item',
-                             editor=RangeEditor(high=len(locations)-1,
-                             low=0),show_label=False),
-                             width=700,
-                             height=600,
-                             resizable=True, title=fn)
-            def __init__(self):
-                super(InteractiveViewer, self).__init__()
-                axes1 = self.figure.add_subplot(211)
-                axes2 = self.figure.add_subplot(212)
-                
-            
-            def _viewed_item_changed(self):
-                process_item(self.viewed_item, 
-                    append=False, figure=self.figure)
-        InteractiveViewer().configure_traits()
-    #else:
-    #    for ii in xrange(len(locations)):
-    #        process_item(ii, append=True)
-    
-    #return np.concatenate(features,axis=0), ids[db_obj_accounted_for]
 
 
 def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
@@ -340,92 +304,3 @@ def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
         allobjects = np.concatenate(allobjects,axis=0)
         allids = np.concatenate(allids,axis=0)
         return allobjects, allids
-
-
-def coef2knots(x):
-    return x - 4
-
-def unmix(data, meandata, stddata, k=3):
-    D = len(meandata)
-    perspline = (D - 1)/2
-    t = internal_knots(coef2knots(perspline))
-    t = np.concatenate((np.zeros(4),t,np.ones(4)))
-    data = data * stddata # intentionally not inplace
-    data += meandata
-    return (t,np.concatenate((data[:perspline],np.zeros((4)))),k), \
-        (t,np.concatenate((data[perspline:(2*perspline)],np.zeros(4))),k)
-
-
-def unmix_and_sample(params,meandata,stddata,k=3,component=None):
-    samp = mog_em.sample_mog(1,params,component=component).squeeze()
-    return unmix(samp, meandata, stddata, k)
-
-
-def plot_from_spline(tck, samples=500, *args, **kwds):
-    print len(tck[0])
-    print len(tck[1])
-    dep_var = np.mgrid[0:1:(samples * 1j)]
-    splval = interp.splev(dep_var, tck)
-    pyplot.plot(dep_var,splval,*args,**kwds)
-
-def sample_plots(params,meandata,stddata,subplotsize,nsamp):
-    pyplot.ioff()
-    pyplot.clf()
-    for i in xrange(len(params['logalpha'])):
-        pyplot.subplot(*tuple(subplotsize + (i+1,)))
-        means = unmix(params['mu'][:,i],meandata,stddata)
-        plot_from_spline(means[0],500)
-        plot_from_spline(means[1],500)
-        pyplot.title("Cluster %d" % (i+1,))
-        for k in xrange(nsamp):
-            tck1,tck2 = unmix_and_sample(params,meandata,stddata,component=i)
-            plot_from_spline(tck1,500,'--')
-            plot_from_spline(tck2,500,'-.')
-    pyplot.show()
-    pyplot.ion()
-
-
-def cells_in_database_per_imagefile(datafiles, headerfile=None):
-    """
-    Reads in CSV files that contain object records.
-
-    Returns a dictionary where the keys are the image filename (with 
-    / replaced by _) and the values are NumPy arrays containing coordinate
-    lists, as well as another dictionary giving ImageNumber/ObjectNumbers.
-    """
-    if hasattr(datafiles, 'read'):
-        datafiles = [datafiles]
-    cells = {}
-    if headerfile:
-        headers = [h[1:-1] for h in headerfile.read().split(',')]
-    else:
-        headers = None
-    for datafile in datafiles:
-        reader = csv.DictReader(datafile, fieldnames=headers,
-            delimiter=',',quotechar='"')
-        for row in reader:
-    	    key = row['Image_PathName_GFP'] + '/' + \
-    	        row['Image_FileName_GFP']
-    	    imgnum = row['ImageNumber']
-    	    objnum = row['ObjectNumber']
-    	    location = [np.float64(row['cells_Location_Center_X']),
-    	        np.float64(row['cells_Location_Center_Y'])]
-    	    cells.setdefault(key, []).append(((imgnum,objnum),location))
-    	print "Finished with %s" % datafile.name
-    allids = {}
-    for image in cells.keys():
-        ids, locations = zip(*cells[image])
-        ids = np.array(ids,dtype=int)
-        locations = np.array(locations)
-        del cells[image]
-        image = image.replace('/','_')
-        cells[image] = locations
-        allids[image] = ids
-    return cells, allids
-
-if __name__ == "__main__":
-    import sys
-    if sys.argv[1] == "plot":
-        locs = np.load('/Users/dwf/locations.npz')
-        ids = np.load('/Users/dwf/ids.npz')
-        load_and_process('/Users/dwf/data/binary', locs, ids,plot=True)
