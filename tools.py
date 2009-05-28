@@ -15,6 +15,7 @@ import matplotlib.image
 import matplotlib.pyplot as pyplot
 import matplotlib.legend as mlegend
 import matplotlib.font_manager as font
+import wx
 
 
 

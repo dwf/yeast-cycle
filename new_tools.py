@@ -10,10 +10,10 @@ import numpy as np
 import scipy.ndimage as ndimage
 
 # Traits-related imports
-from enthought.traits.api import HasTraits, Instance, Int, Array, List, Str
+from enthought.traits.api import HasTraits, Instance, Int, Array, List, Str, Property, Tuple
 
 # View components
-from enthought.traits.ui.api import View, Item
+from enthought.traits.ui.api import View, Item, Group, Controller
 
 # Editor components
 from enthought.traits.ui.api import RangeEditor, InstanceEditor
@@ -79,7 +79,7 @@ class ObjectSilhouette(HasTraits):
 
 class ImageSilhouette(HasTraits):
     label_image = Array()
-    object_slices = List(slice, ())
+    object_slices = List(Tuple(slice,slice), ())
     
     def __init__(self, node):
         super(ImageSilhouette, self).__init__()
@@ -95,7 +95,7 @@ class ImageSilhouette(HasTraits):
     
     def __getitem__(self, key):
         if type(key) is slice:
-            indices = islice(xrange(len(self.object_slices)), *key.indices())
+            indices = islice(xrange(len(self)), *key.indices(len(self)))
             return [self[nkey] for nkey in indices]
         else:
             im = self.label_image[self.object_slices[key]] == (key + 1)
@@ -120,19 +120,16 @@ class Plate(HasTraits):
 
     def __getitem__(self, key):
         if type(key) is slice:
-            indices = islice(xrange(len(self.images)), *key.indices())
+            indices = islice(xrange(len(self)), 
+                *key.indices(len(self.images)))
             return [self[nkey] for nkey in indices]
         else:
-            im = self.label_image[self.images[key]] == (key + 1)
-            return ObjectSilhouette(im)
+            im = self.node._v_file.getNode(self.images[key])
+            return ImageSilhouette(im)
 
     def __contains__(self):
         raise TypeError("Containment checking not supported")
-
-
-
-
-
+    
 
 class DataSet(HasTraits):
     h5file = Instance(tables.File)
@@ -142,20 +139,43 @@ class DataSet(HasTraits):
         super(DataSet, self).__init__()
         for platenode in h5file.root:
             self.plates.append(platenode._v_pathname)
+        self.h5file = h5file
+    
+    def __len__(self):
+        return len(self.plates)
+
+    def __getitem__(self, key):
+        if type(key) is slice:
+            indices = islice(xrange(len(self)), *key.indices(len(self)))
+            return [self[nkey] for nkey in indices]
+        else:
+            node = self.h5file.getNode(self.plates[key])
+            return Plate(node)
+    
+    def __contains__(self):
+        raise TypeError("Containment checking not supported")
     
 
-
-class DataSetBrowser(HasTraits):
+class DataSetBrowserContext(ModelView):
+    # matplotlib Figure instance
     figure = Instance(Figure, ())
     
+    # DataSet being viewed
     dataset = Instance(DataSet, ())
+    
+    # Plate object currently being examined
     current_plate = Instance(Plate, ())
+    
+    # ImageSilhouette object currently being examined
     current_image = Instance(ImageSilhouette, ())
+    
+    # ObjectSilhouette object currently being examined
     current_object = Instance(ObjectSilhouette, ())
     
-    plate_index = Int(0)
-    image_index = Int(0)
-    object_index = Int(0)
+    # Index traits that control the 
+    plate_index = Int(1,editor=RangeEditor(low=1,mode='slider'))
+    image_index = Int(1,editor=RangeEditor(low=1,mode='slider'))
+    object_index = Int(1,editor=RangeEditor(low=1,mode='slider'))
     
     num_plates = Property
     num_images = Property
@@ -163,36 +183,39 @@ class DataSetBrowser(HasTraits):
     
     view = View(Item('figure', editor=MPLFigureEditor(),
                     show_label=False), 
-            Item('object_index',editor=RangeEditor(low=1,mode='slider')),
-            Item('image_index',editor=RangeEditor(low=1,mode='slider')),
-            Item('plate_index',editor=RangeEditor(low=1,mode='slider')),
+            Item('object_index'),
+            Item('image_index'),
+            Item('plate_index'),
             width=700,
             height=600,
             resizable=True)
     
-    def __init__(self, dataset):
+    def __init__(self, model, **metadata):
         self.dataset = dataset
-        self.current_plate = self.dataset.plates[self.plate_index]
-        axes1 = self.figure.add_subplot(211)
-        axes2 = self.figure.add_subplot(212)
+        self.current_plate = self.dataset[self.plate_index - 1]
+        self.current_image = self.current_plate[self.image_index - 1]
+        self.current_object = self.current_image[self.object_index - 1]
     
     def _plate_index_changed(self):
-        self.current_plate = self.dataset.plates[self.plate_index - 1]    
+        self.current_plate = self.dataset[self.plate_index - 1]
+        self.image_index = 1
     
     def _image_index_changed(self):
-        self.current_image = self.current_plate.images[self.image_index - 1]
+        self.current_image = self.current_plate[self.image_index - 1]
+        self.object_index = 1
     
     def _object_index_changed(self):
-        # Act on ImageSilhouette
-        self.current_object = self.current_image[self.object_index]
+        self.current_object = self.current_image[self.object_index - 1]
+        self.current_object.process_item(self.figure)
     
     def _get_num_plates(self):
-        return len(self.dataset.plates)
+        return len(self.dataset)
     
     def _get_num_images(self):
-        return len(self.current_plate.images)
+        return len(self.current_plate)
     
     def _get_num_objects(self):
-        return len(self.current_image.objects)
+        return len(self.current_image)
     
+
     
