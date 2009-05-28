@@ -13,7 +13,7 @@ import scipy.ndimage as ndimage
 from enthought.traits.api import HasTraits, Instance, Int, Array, List, Str, Property, Tuple
 
 # View components
-from enthought.traits.ui.api import View, Item, Group, Controller
+from enthought.traits.ui.api import View, Item, Group, ModelView
 
 # Editor components
 from enthought.traits.ui.api import RangeEditor, InstanceEditor
@@ -75,7 +75,6 @@ class ObjectSilhouette(HasTraits):
         except ObjectTooSmallError, e:
             pass
     
-
 
 class ImageSilhouette(HasTraits):
     label_image = Array()
@@ -156,7 +155,7 @@ class DataSet(HasTraits):
         raise TypeError("Containment checking not supported")
     
 
-class DataSetBrowserContext(ModelView):
+class BrowserController(HasTraits):
     # matplotlib Figure instance
     figure = Instance(Figure, ())
     
@@ -172,17 +171,20 @@ class DataSetBrowserContext(ModelView):
     # ObjectSilhouette object currently being examined
     current_object = Instance(ObjectSilhouette, ())
     
-    # Index traits that control the 
-    plate_index = Int(1,editor=RangeEditor(low=1,mode='slider'))
-    image_index = Int(1,editor=RangeEditor(low=1,mode='slider'))
-    object_index = Int(1,editor=RangeEditor(low=1,mode='slider'))
+    # Index traits that control the selected plate/image/object
+    plate_index = Int(1, editor=RangeEditor(low=1, 
+        high_name='num_plates', mode='slider'))
+    image_index = Int(1, editor=RangeEditor(low=1, 
+        high_name='num_images', mode='slider'))
+    object_index = Int(1, editor=RangeEditor(low=1, 
+        high_name='num_objects', mode='slider'))
     
+    # Number of plates, images, and objects in the current context
     num_plates = Property
     num_images = Property
     num_objects = Property
     
-    view = View(Item('figure', editor=MPLFigureEditor(),
-                    show_label=False), 
+    view = View(Item('figure', editor=MPLFigureEditor(), show_label=False), 
             Item('object_index'),
             Item('image_index'),
             Item('plate_index'),
@@ -190,11 +192,29 @@ class DataSetBrowserContext(ModelView):
             height=600,
             resizable=True)
     
-    def __init__(self, model, **metadata):
+    def __init__(self, dataset, **metadata):
         self.dataset = dataset
         self.current_plate = self.dataset[self.plate_index - 1]
         self.current_image = self.current_plate[self.image_index - 1]
         self.current_object = self.current_image[self.object_index - 1]
+        self.figure = Figure()
+        self.figure.add_subplot(211)
+        self.figure.add_subplot(212)
+        super(BrowserController, self).__init__(**metadata)
+    
+    def object_plate_index_changed(self, info):
+        pass
+        if not info.initialized:
+            info.ui.updated = True
+    
+    def object_image_index_changed(self, info):
+        pass
+        if not info.initialized:
+            info.ui.updated = True
+    
+    ######################### Private interface ##########################
+    
+    
     
     def _plate_index_changed(self):
         self.current_plate = self.dataset[self.plate_index - 1]
@@ -216,6 +236,4 @@ class DataSetBrowserContext(ModelView):
     
     def _get_num_objects(self):
         return len(self.current_image)
-    
-
     
