@@ -3,6 +3,7 @@ from itertools import izip, islice
 # For our matplotlib figure
 import matplotlib
 from matplotlib.figure import Figure
+import pdb
 
 # For image operations and file I/O, ndimage and pytables
 import tables
@@ -13,7 +14,7 @@ import scipy.ndimage as ndimage
 from enthought.traits.api import HasTraits, Instance, Int, Array, List, Str, Property, Tuple
 
 # View components
-from enthought.traits.ui.api import View, Item, Group, ModelView
+from enthought.traits.ui.api import View, Item, Group, Handler, VGroup
 
 # Editor components
 from enthought.traits.ui.api import RangeEditor, InstanceEditor
@@ -77,6 +78,7 @@ class ObjectSilhouette(HasTraits):
     
 
 class ImageSilhouette(HasTraits):
+    """Class representing a silhouette image of segmented cells."""
     label_image = Array()
     object_slices = List(Tuple(slice,slice), ())
     
@@ -88,7 +90,7 @@ class ImageSilhouette(HasTraits):
         
         # Get slices that index the array
         self.object_slices = ndimage.find_objects(self.label_image)
-    
+        
     def __len__(self):
         return len(self.object_slices)
     
@@ -105,6 +107,7 @@ class ImageSilhouette(HasTraits):
     
 
 class Plate(HasTraits):
+    """Class representing a single plate of imaged wells."""
     node = Instance(tables.Group)
     images = List(Str)
     
@@ -131,10 +134,17 @@ class Plate(HasTraits):
     
 
 class DataSet(HasTraits):
+    """
+    A class encapsulating a dataset of binary masks of segmented images 
+    stored in an HDF5 file.
+    """
     h5file = Instance(tables.File)
     plates = List(Str)
     
     def __init__(self, h5file):
+        """
+        Construct a DataSet object from the given PyTables file handle.
+        """
         super(DataSet, self).__init__()
         for platenode in h5file.root:
             self.plates.append(platenode._v_pathname)
@@ -155,22 +165,27 @@ class DataSet(HasTraits):
         raise TypeError("Containment checking not supported")
     
 
-class BrowserController(HasTraits):
+class DataSetBrowser(HasTraits):
+    """
+    A class that allows browsing of a DataSet object with sliders
+    to navigate through plates, images within plates, and objects 
+    within images.
+    """
     # matplotlib Figure instance
     figure = Instance(Figure, ())
-    
+
     # DataSet being viewed
-    dataset = Instance(DataSet, ())
-    
+    dataset = Instance(DataSet)
+
     # Plate object currently being examined
-    current_plate = Instance(Plate, ())
-    
+    current_plate = Instance(Plate)
+
     # ImageSilhouette object currently being examined
-    current_image = Instance(ImageSilhouette, ())
-    
+    current_image = Instance(ImageSilhouette)
+
     # ObjectSilhouette object currently being examined
-    current_object = Instance(ObjectSilhouette, ())
-    
+    current_object = Instance(ObjectSilhouette)
+
     # Index traits that control the selected plate/image/object
     plate_index = Int(1, editor=RangeEditor(low=1, 
         high_name='num_plates', mode='slider'))
@@ -178,21 +193,26 @@ class BrowserController(HasTraits):
         high_name='num_images', mode='slider'))
     object_index = Int(1, editor=RangeEditor(low=1, 
         high_name='num_objects', mode='slider'))
-    
+
     # Number of plates, images, and objects in the current context
-    num_plates = Property
-    num_images = Property
-    num_objects = Property
-    
-    view = View(Item('figure', editor=MPLFigureEditor(), show_label=False), 
-            Item('object_index'),
-            Item('image_index'),
-            Item('plate_index'),
-            width=700,
-            height=600,
-            resizable=True)
-    
+    num_plates = Property(Int, depends_on='dataset')
+    num_images = Property(Int, depends_on='current_plate')
+    num_objects = Property(Int, depends_on='current_image')
+
+    view = View(
+        VGroup(
+            Item('figure', editor=MPLFigureEditor(), show_label=False), 
+            Group(Item('object_index'),
+                Item('image_index'),
+                Item('plate_index'))
+        ),
+        height=600,
+        width=700,
+        resizable=True)
+
     def __init__(self, dataset, **metadata):
+        """Construct a DataSetBrowser from the specified DataSet object."""
+        super(DataSetBrowser, self).__init__()
         self.dataset = dataset
         self.current_plate = self.dataset[self.plate_index - 1]
         self.current_image = self.current_plate[self.image_index - 1]
@@ -200,40 +220,44 @@ class BrowserController(HasTraits):
         self.figure = Figure()
         self.figure.add_subplot(211)
         self.figure.add_subplot(212)
-        super(BrowserController, self).__init__(**metadata)
-    
-    def object_plate_index_changed(self, info):
-        pass
-        if not info.initialized:
-            info.ui.updated = True
-    
-    def object_image_index_changed(self, info):
-        pass
-        if not info.initialized:
-            info.ui.updated = True
-    
-    ######################### Private interface ##########################
-    
-    
-    
+        self._object_index_changed()
+
+    ######################### Private interface ##########################    
+
     def _plate_index_changed(self):
-        self.current_plate = self.dataset[self.plate_index - 1]
+        """Handle the plate index changing."""
+        try:
+            self.current_plate = self.dataset[self.plate_index - 1]
+        except IndexError:
+            self.current_plate = None
         self.image_index = 1
-    
+        self._image_index_changed()
+
     def _image_index_changed(self):
-        self.current_image = self.current_plate[self.image_index - 1]
+        """Handle the image index slider changing."""
+        try:
+            self.current_image = self.current_plate[self.image_index - 1]
+        except IndexError:
+            self.current_image = None
         self.object_index = 1
-    
+        self._object_index_changed()
+
     def _object_index_changed(self):
-        self.current_object = self.current_image[self.object_index - 1]
-        self.current_object.process_item(self.figure)
+        """Handle object index slider changing."""
+        try:
+            self.current_object = self.current_image[self.object_index - 1]
+            self.current_object.process_item(self.figure)
+        except IndexError:
+            self.current_object = None
     
     def _get_num_plates(self):
+        """Return the number of plates in the currently viewed dataset."""
         return len(self.dataset)
-    
+
     def _get_num_images(self):
+        """Return the number of images in the currently viewed plate."""
         return len(self.current_plate)
-    
+
     def _get_num_objects(self):
+        """Return the number of objects in the currently viewed image."""
         return len(self.current_image)
-    
