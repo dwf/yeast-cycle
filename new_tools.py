@@ -1,8 +1,6 @@
 """Traits-based tools for image preprocessing."""
 from itertools import islice
-
-import logging
-log = logging.getLogger(__file__.split('.')[0])
+import traceback
 
 # For our matplotlib figure
 from matplotlib.figure import Figure
@@ -18,8 +16,8 @@ from enthought.traits.api import List, Tuple, Array
 from enthought.traits.api import HasTraits, Instance, Property
 
 # Chaco
-from enthought.chaco.api import ArrayPlotData, Plot, bone, jet
-from enthought.enable.component_editor import ComponentEditor
+#from enthought.chaco.api import ArrayPlotData, Plot, bone, jet
+#from enthought.enable.component_editor import ComponentEditor
 
 # View components
 from enthought.traits.ui.api import View, Item, Group, VGroup
@@ -29,6 +27,7 @@ from enthought.traits.ui.api import RangeEditor
 from embedded_figure import MPLFigureEditor
 
 from rotation import fit_ellipse, align_image_to_ellipse
+from rotation import EllipseFitError, EllipseAlignmentError
 from tools import spline_features
 
 class ObjectSilhouette(HasTraits):
@@ -47,15 +46,21 @@ class ObjectSilhouette(HasTraits):
         Return an aligned version of this ObjectSilhouette
         """
         image = self.image
-        coeffs = fit_ellipse(*(np.where(image)))
-        if coeffs.size != 6:
-            log.debug('Ellipse fit failed.')
-            return
-        rotated, angle = align_image_to_ellipse(coeffs, image)
+        try:
+            coeffs = fit_ellipse(*(np.where(image)))
+        except EllipseFitError:
+            traceback.print_exc()
+            return None
+        try:
+            rotated, angle = align_image_to_ellipse(coeffs, image)
+        except EllipseAlignmentError:
+            traceback.print_exc()
+            return None
         return ObjectSilhouette(rotated, angle)
     
     
     def process_item(self, fig):
+        """Hook to draw all of the fun stuff."""
         spline_features(self.aligned().image, plot=True, fig=fig)
     
 
@@ -171,7 +176,7 @@ class DataSetBrowser(HasTraits):
     
     
     # Chaco plot
-    plot = Instance(Plot)
+    #plot = Instance(Plot)
     
     # matplotlib Figure instance
     figure = Instance(Figure, ())
@@ -200,7 +205,7 @@ class DataSetBrowser(HasTraits):
     
     def __init__(self, dataset, **metadata):
         """Construct a DataSetBrowser from the specified DataSet object."""
-        super(DataSetBrowser, self).__init__()
+        super(DataSetBrowser, self).__init__(**metadata)
         self.dataset = dataset
         self.current_plate = self.dataset[self.plate_index - 1]
         self.current_image = self.current_plate[self.image_index - 1]
@@ -238,7 +243,7 @@ class DataSetBrowser(HasTraits):
             self.current_image = None
         self.object_index = 1
         self._object_index_changed()
-
+    
     def _object_index_changed(self):
         """Handle object index slider changing."""
         try:
@@ -258,3 +263,4 @@ class DataSetBrowser(HasTraits):
     def _get_num_objects(self):
         """Return the number of objects in the currently viewed image."""
         return len(self.current_image)
+    
