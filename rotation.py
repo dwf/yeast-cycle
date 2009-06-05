@@ -2,7 +2,7 @@
 
 from functools import wraps
 import numpy as np
-import scipy.linalg
+import scipy.linalg as s_linalg
 import scipy.ndimage as ndimage
 
 
@@ -67,7 +67,7 @@ def fit_ellipse(xcoord, ycoord, constraint=None):
     
     scatter = np.dot(expansion.T, expansion)
     
-    geval, gevec = scipy.linalg.eig(scatter, constraint)
+    geval, gevec = s_linalg.eig(scatter, constraint)
     negative_c = np.where((geval < 0) & (~np.isinf(geval)))
     return np.real(gevec[:, negative_c]).squeeze()
 
@@ -129,3 +129,4 @@ def align_image_to_ellipse(coeffs, image):
         raise EllipseAlignmentError("Can't find object after final rotation.")
     
     return rotated[bounds], angle
+
