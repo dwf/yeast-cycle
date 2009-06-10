@@ -12,7 +12,6 @@ MIN_LOGPROB = np.log(MIN_PROB)
 LOOKBACK = 5
 DEBUG_LIKELIHOOD_DECREASE = False
 
-
 try:
     import matplotlib.pyplot as pyplot
     PLOTTING_AVAILABLE = True
@@ -20,7 +19,7 @@ try:
 except ImportError:
     PLOTTING_AVAILABLE = False
 
-def logsumexp(logx, axis=-1):
+def _logsumexp(logx, axis=-1):
     """
     Compute log(sum(exp(x))) in a numerically stable way.  
     Use second argument to specify along which dimensions the logsumexp
@@ -42,7 +41,7 @@ def logsumexp(logx, axis=-1):
             lastdim))
 
 
-def print_now(s):
+def _print_now(s):
     print s
     sys.stdout.flush()
 
@@ -61,9 +60,9 @@ def plot_progress(lhistory):
         pyplot.ion()
 
 
-class GaussianMixture:
+class GaussianMixture(object):
     """Basic Gaussian mixture model."""
-    def __init__(self, ncomponent, data, update=None, pseudocounts=0):
+    def __init__(self, ncomponent, data, norm=False, pcounts=0, update=None):
         """
         Constructor. 
         Add real documentation.
@@ -71,8 +70,16 @@ class GaussianMixture:
         # We use these a lot below, so cache them for readability
         ntrain, ndim = data.shape
         
-        self._data = data
-        self._pseudocounts = pseudocounts
+        if norm == True:
+            self._normmean = data.mean(axis=0)
+            self._normstd = data.std(axis=0)
+            self._data = (data.copy() - self._normmean) / self._normstd
+        else:
+            self._data = data
+            self._normmean = None
+            self._normstd = None
+        
+        self._pseudocounts = pcounts
         
         # Handle the 'update' array, which tells us whether or not we 
         # update a given component's parameters by M-step estimation.
@@ -192,7 +199,7 @@ class GaussianMixture:
         for clust in xrange(self._ncomponent()):
             condprobs[clust, :] = self.log_probs(clust, data)
         condprobs += logalpha[:, np.newaxis]
-        lik = logsumexp(condprobs, axis=0)
+        lik = _logsumexp(condprobs, axis=0)
         return condprobs, lik
     
     
@@ -234,7 +241,7 @@ class GaussianMixture:
         data = self._data
         sumresp = resp.sum(axis=1)
         if np.any(sumresp == 0):
-            print_now("WARNING: A cluster got assigned 0 responsibility.")
+            _print_now("WARNING: A cluster got assigned 0 responsibility.")
             sumresp[sumresp == 0] = 1.
         data = self._data
         num = np.dot(resp, data)
@@ -275,12 +282,12 @@ class GaussianMixture:
                     newprecision = linalg.inv(newsigma)
                     if np.isnan(np.log(linalg.det(newprecision))) or \
                     np.isinf(np.log(linalg.det(newprecision))):
-                        print_now("NEW PRECISION DETERMINANT:" + \
+                        _print_now("NEW PRECISION DETERMINANT:" + \
                             str(linalg.det(newprecision)))
                     else:
                         self._precision[:, :, clust] = newprecision
                 except linalg.LinAlgError:
-                    print_now("Failed to invert %d, cond=%f" % (clust,
+                    _print_now("Failed to invert %d, cond=%f" % (clust,
                         linalg.cond(newsigma)))
                     pyplot.figure(2)
                     pyplot.matshow(newsigma)
@@ -325,7 +332,7 @@ class GaussianMixture:
             lcurr = self.loglikelihood()
             
             if lcurr < lprev:
-                print_now("Likelihood went down!")
+                _print_now("Likelihood went down!")
                 if DEBUG_LIKELIHOOD_DECREASE:
                     self.display(name="OLD", figurenum=3,
                         precision=self._oldprecision, 
@@ -334,7 +341,7 @@ class GaussianMixture:
                     pdb.set_trace()
             
             count += 1
-            print_now("%5d: L = %10.5f" % (count, lcurr))
+            _print_now("%5d: L = %10.5f" % (count, lcurr))
             lhistory.append(lcurr)
         return lhistory
     
@@ -398,7 +405,8 @@ class GaussianMixtureWithGarbageModel(GaussianMixture):
                 raise ValueError("'update' argument must be K elements long")
             update[1:] = keywords['update']
         keywords['update'] = update
-        GaussianMixture.__init__(self, ncomponent + 1, data, *args, **keywords)
+        GaussianMixture.__init__(self, ncomponent + 1, data, 
+            *args, **keywords)
         self._train_data_precision = linalg.inv(np.cov(data, rowvar=False))
         self._precision[:, :, 0] = self._train_data_precision
         self._means[0, :] = np.mean(data, axis=0)
@@ -428,7 +436,7 @@ class DiagonalGaussianMixture(GaussianMixture):
                 newprec = newsigma # No copy
                 newprec **= -1. # Invert
                 if np.any(np.isnan(newprec)) or np.any(np.isinf(newprec)): 
-                    print_now("WARNING: Zero div updating precision %d" \
+                    _print_now("WARNING: Zero div updating precision %d" \
                     % clust)
                 else:
                     self._precision[:, :, clust] = np.diag(newprec)
