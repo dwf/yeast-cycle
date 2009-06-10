@@ -228,3 +228,28 @@ def load_and_process(path, locs, ids, prefix="_home_moffatopera_",
         allobjects = np.concatenate(allobjects,axis=0)
         allids = np.concatenate(allids,axis=0)
         return allobjects, allids
+
+def internal_knots(nknots):
+    return np.mgrid[0:1:(nknots+2)*1j][1:-1]
+
+
+def plot_from_spline(tck, samples=500, *args, **kwds):
+    dep_var = np.mgrid[0:1:(samples * 1j)]
+    splval = interp.splev(dep_var, tck)
+    pyplot.plot(dep_var,splval,*args,**kwds)
+
+
+def coef2knots(x):
+    return x - 4
+
+
+def unmix(data, meandata, stddata, k=4):
+    D = len(meandata)
+    perspline = (D - 1)/2
+    t = internal_knots(coef2knots(perspline))
+    t = np.concatenate((np.zeros(4),t,np.ones(4)))
+    data = data * stddata # intentionally not inplace
+    data += meandata
+    return (t,np.concatenate((data[:perspline],np.zeros((4)))),k), \
+        (t,np.concatenate((data[perspline:(2*perspline)],np.zeros(4))),k)
+
