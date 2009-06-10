@@ -40,42 +40,6 @@ def imread_binary(*kw, **args):
     return matplotlib.image.pil_to_array(im)[:,:,0] == 255
 
 
-_ellipse_cstrt = np.zeros((6,6))
-_ellipse_cstrt[2,0] = -2; _ellipse_cstrt[0,2] = -2; _ellipse_cstrt[1,1] =  1
-
-
-def fit_ellipse(x,y):
-    """
-    Directly fit an ellipse to some scattered 2-D data.
-    
-    This function fits an ellipse to some scattered 2-D data using the method
-    of Fitzgibbon, Pilu and Fisher (1999), minimizing algebraic distance 
-    subject to 4ac^2 - b = 1.
-    
-    Keyword arguments:
-    x -- numpy.array of x coordinates (1-dimensional)
-    y -- numpy.array of y coordinates (1-dimensional)
-    
-    Returns:
-    Array of coefficients of the ellipse in the order (x^2, xy, y^2, x, y, 1)
-    
-    This code was directly adapted from MATLAB(tm) code provided in-text by
-    the original authors of this method.
-    """
-    D = np.concatenate(((x * x)[:,np.newaxis],(x * y)[:,np.newaxis], 
-        (y * y)[:,np.newaxis], x[:,np.newaxis], y[:,np.newaxis], 
-        np.ones((len(y),1))), axis=1)
-    S = np.dot(D.T, D)
-    global _ellipse_cstrt
-    C = _ellipse_cstrt
-    geval, gevec = scipy.linalg.eig(S, C)
-    NegC = np.where((geval < 0) & (~np.isinf(geval)))
-    return np.real(gevec[:,NegC]).squeeze()
-
-def radians_to_degrees(angle):
-    """Encapsulate turning radians into degrees for code clarity."""
-    return angle * 180.0 / np.pi
-
 def medial_axis_representation(obj):
     """Return the (mean-subtracted) medial points and width."""
     width = np.zeros(obj.shape[0])

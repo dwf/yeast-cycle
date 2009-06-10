@@ -1,5 +1,6 @@
 """Traits-based tools for image preprocessing."""
 from itertools import islice
+import traceback
 
 # For our matplotlib figure
 from matplotlib.figure import Figure
@@ -15,8 +16,8 @@ from enthought.traits.api import List, Tuple, Array
 from enthought.traits.api import HasTraits, Instance, Property
 
 # Chaco
-from enthought.chaco.api import ArrayPlotData, Plot, bone, jet
-from enthought.enable.component_editor import ComponentEditor
+#from enthought.chaco.api import ArrayPlotData, Plot, bone, jet
+#from enthought.enable.component_editor import ComponentEditor
 
 # View components
 from enthought.traits.ui.api import View, Item, Group, VGroup
@@ -25,61 +26,44 @@ from enthought.traits.ui.api import View, Item, Group, VGroup
 from enthought.traits.ui.api import RangeEditor
 from embedded_figure import MPLFigureEditor
 
-from tools import fit_ellipse, spline_features, radians_to_degrees
-from tools import ObjectTooSmallError
+from rotation import fit_ellipse, align_image_to_ellipse
+from rotation import EllipseFitError, EllipseAlignmentError
+from tools import spline_features
 
 class ObjectSilhouette(HasTraits):
     """Class representing a single cell silhouette in an image."""
-    figure = Instance(Figure, ())    
     image = Array(dtype=bool) 
     
-    def __init__(self, image):
+    def __init__(self, image, angle=None):
         """Document me."""
         super(ObjectSilhouette, self).__init__()
         self.image = image
+        self.angle = None
+    
+    
+    def aligned(self):
+        """
+        Return an aligned version of this ObjectSilhouette
+        """
+        image = self.image
+        try:
+            coeffs = fit_ellipse(*(np.where(image)))
+        except EllipseFitError:
+            traceback.print_exc()
+            return None
+        try:
+            rotated, angle = align_image_to_ellipse(coeffs, image)
+        except EllipseAlignmentError:
+            traceback.print_exc()
+            return None
+        return ObjectSilhouette(rotated, angle)
+    
     
     def process_item(self, fig):
-        image = self.image
-        # Fit an ellipse using every nonzero pixel location in the image.
-        coeffs = fit_ellipse(*(np.where(image)))
-        if coeffs.size != 6:
-            print "[e] Ellipse fit im #%d, obj #%d"
-            return
-        else:
-            coeff_a, coeff_b, coeff_c = coeffs[:3]
-        preangle = coeff_b / (coeff_a - coeff_c)
-        if not np.isinf(preangle):
-            angle = radians_to_degrees(-0.5 * np.arctan(preangle))
-            # Order = 0 prevents interpolation from being done and screwing 
-            # with our object boundaries.
-            rotated = ndimage.rotate(image, angle, order=0)
-            height, width = rotated[ndimage.find_objects(rotated)[0]].shape
-        else:
-            angle = 0.
-            
-        if width > height:
-            angle -= 90.0
-            rotated = ndimage.rotate(image, angle, order=0)
-        # Correct so that in budding cells, the "major" hump is always
-        # on the first.          
-        if np.argmax(rotated.sum(axis=1)) > rotated.shape[0] // 2:
-            angle -= 180.0
-            rotated = ndimage.rotate(image, angle, order=0)
-        
-        # Do a find_objects on the resultant array after rotation in 
-        # order to _just_ get the object and not any of the extra 
-        # space that's been added.
-        try:
-            bounds = ndimage.find_objects(rotated)[0]
-        except IndexError:
-            pass
-        
-        try:
-            spline_features(rotated[bounds], plot=True,
-                    fig=fig)
-        except ObjectTooSmallError:
-            pass
+        """Hook to draw all of the fun stuff."""
+        spline_features(self.aligned().image, plot=True, fig=fig)
     
+
 
 class ImageSilhouette(HasTraits):
     """Class representing a silhouette image of segmented cells."""
@@ -107,7 +91,7 @@ class ImageSilhouette(HasTraits):
             return ObjectSilhouette(image)
     
     def __contains__(self):
-        raise TypeError("Containment checking not supported")
+        raise TypeError("Containment checking not supported: %s" % str(self))
     
 
 class Plate(HasTraits):
@@ -134,8 +118,7 @@ class Plate(HasTraits):
             return ImageSilhouette(image)
 
     def __contains__(self):
-        raise TypeError("Containment checking not supported")
-    
+        raise TypeError("Containment checking not supported: %s" % str(self))
 
 class DataSet(HasTraits):
     """
@@ -175,8 +158,25 @@ class DataSetBrowser(HasTraits):
     to navigate through plates, images within plates, and objects 
     within images.
     """
+    
+    view = View(
+            VGroup(
+                Item('figure', editor=MPLFigureEditor(), show_label=False), 
+                Group(Item('object_index', editor=RangeEditor(low=1, 
+                    high_name='num_objects', mode='slider')),
+                    Item('image_index', editor=RangeEditor(low=1, 
+                        high_name='num_objects', mode='slider')),
+                    Item('plate_index', editor=RangeEditor(low=1, 
+                            high_name='num_objects', mode='slider'))
+            )),
+            height=600,
+            width=700,
+            resizable=True)
+    
+    
+    
     # Chaco plot
-    plot = Instance(Plot)
+    #plot = Instance(Plot)
     
     # matplotlib Figure instance
     figure = Instance(Figure, ())
@@ -186,7 +186,7 @@ class DataSetBrowser(HasTraits):
     
     # Plate object currently being examined
     current_plate = Instance(Plate)
-
+    
     # ImageSilhouette object currently being examined
     current_image = Instance(ImageSilhouette)
 
@@ -194,32 +194,18 @@ class DataSetBrowser(HasTraits):
     current_object = Instance(ObjectSilhouette)
 
     # Index traits that control the selected plate/image/object
-    plate_index = Int(1, editor=RangeEditor(low=1, 
-        high_name='num_plates', mode='slider'))
-    image_index = Int(1, editor=RangeEditor(low=1, 
-        high_name='num_images', mode='slider'))
-    object_index = Int(1, editor=RangeEditor(low=1, 
-        high_name='num_objects', mode='slider'))
+    plate_index = Int(1)
+    image_index = Int(1)
+    object_index = Int(1)
 
     # Number of plates, images, and objects in the current context
     num_plates = Property(Int, depends_on='dataset')
     num_images = Property(Int, depends_on='current_plate')
     num_objects = Property(Int, depends_on='current_image')
     
-    view = View(
-            VGroup(
-                Item('figure', editor=MPLFigureEditor(), show_label=False), 
-                Group(Item('object_index'),
-                    Item('image_index'),
-                    Item('plate_index'))
-            ),
-            height=600,
-            width=700,
-            resizable=True)
-
     def __init__(self, dataset, **metadata):
         """Construct a DataSetBrowser from the specified DataSet object."""
-        super(DataSetBrowser, self).__init__()
+        super(DataSetBrowser, self).__init__(**metadata)
         self.dataset = dataset
         self.current_plate = self.dataset[self.plate_index - 1]
         self.current_image = self.current_plate[self.image_index - 1]
@@ -229,12 +215,14 @@ class DataSetBrowser(HasTraits):
         self.figure.add_subplot(212)
         self._object_index_changed()
         
-        plotdata = ArrayPlotData(imagedata=self.current_object.image)
-        plot = Plot(plotdata)
-        xbounds = np.arange(self.current_object.image.shape[1])
-        ybounds = np.arange(self.current_object.image.shape[0])
-        plot.img_plot("imagedata", xbounds=xbounds, ybounds=ybounds,colormap=bone)
-        self.plot = plot
+        # plotdata = ArrayPlotData(imagedata=self.current_object.image)
+        # plot = Plot(plotdata)
+        # xbounds = np.arange(self.current_object.image.shape[1])
+        # ybounds = np.arange(self.current_object.image.shape[0])
+        # plot.img_plot("imagedata", xbounds=xbounds,
+        #     ybounds=ybounds,colormap=bone)
+        # self.plot = plot
+    
         
     ######################### Private interface ##########################    
 
@@ -255,7 +243,7 @@ class DataSetBrowser(HasTraits):
             self.current_image = None
         self.object_index = 1
         self._object_index_changed()
-
+    
     def _object_index_changed(self):
         """Handle object index slider changing."""
         try:
@@ -275,3 +263,4 @@ class DataSetBrowser(HasTraits):
     def _get_num_objects(self):
         """Return the number of objects in the currently viewed image."""
         return len(self.current_image)
+    
