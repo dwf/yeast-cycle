@@ -207,13 +207,16 @@ def coef2knots(x):
     return x - 4
 
 
-def unmix(data, meandata, stddata, k=4):
-    D = len(meandata)
+def unmix(data, meandata=None, stddata=None, k=4):
+    D = len(data)
     perspline = (D - 1)/2
     t = internal_knots(coef2knots(perspline))
     t = np.concatenate((np.zeros(4),t,np.ones(4)))
-    data = data * stddata # intentionally not inplace
-    data += meandata
+    if stddata is not None:
+        data = data * stddata # intentionally not inplace
+    if meandata is not None:
+        data += meandata
+    print t
     return (t,np.concatenate((data[:perspline],np.zeros((4)))),k), \
         (t,np.concatenate((data[perspline:(2*perspline)],np.zeros(4))),k)
 

@@ -164,9 +164,9 @@ class PrincipalComponents(object):
         """Project into principal components space, using ncmp components."""
         if self._eigvec == None or self._eigvec.shape[1] < ncmp:
             raise ValueError('Not enough eigenvectors computed')
-        if data != None and center == True:
+        if data is not None and center == True:
             centered = data - self._mean
-        elif data != None:
+        elif data is not None:
             centered = data
         else:
             centered = self._data - self._mean
@@ -176,15 +176,20 @@ class PrincipalComponents(object):
             return result.T
         else: 
             return result
-        
+    
     def reconstruct(self, projected):
         """Reconstruct from the principal subspace to data space."""
+        if len(projected.shape) == 1:
+            if not self._rowvar:
+                projected = projected[np.newaxis, :]
+            else:
+                projected = projected[:, np.newaxis]
         if not self._rowvar:
             ncmp = projected.shape[1]
-            return np.dot(projected, self._eigvec[:,:ncmp].T)
+            return np.dot(projected, self._eigvec[:,:ncmp].T) + self._mean
         else:
             ncmp = projected.shape[0]
-            return np.dot(self._eigvec[:, :ncmp], projected)
+            return np.dot(self._eigvec[:, :ncmp], projected) + self._mean
     
     @property
     def ndata(self):

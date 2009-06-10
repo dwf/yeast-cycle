@@ -83,7 +83,7 @@ class GaussianMixture(object):
         
         # Handle the 'update' array, which tells us whether or not we 
         # update a given component's parameters by M-step estimation.
-        if update == None:
+        if update is None:
             self._update = np.ones((ncomponent, ), dtype=bool)
         elif len(update) != ncomponent:
             raise ValueError("len(update) must be equal to ncomponent")

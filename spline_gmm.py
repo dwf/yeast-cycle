@@ -40,16 +40,16 @@ class SplineModelPCAGaussianMixture(GaussianMixture):
     """docstring for SplineModelGaussianMixture"""
     def __init__(self, ncomponent, data, ncmp, *args, **keywords):
         self._pc = PrincipalComponents(data)
-        self._direct()
-        data = self.project(data, ncmp)
-        super(SplineModelGaussianMixture, self).__init__(ncomponent, data,
+        self._pc._direct()
+        data = self._pc.project(ncmp)
+        super(SplineModelPCAGaussianMixture, self).__init__(ncomponent, data,
             norm=False, *args, **keywords)
         
 
     def display(self, precision=None, logalpha=None, name=None,figures=(1,2)):
         """Display covariances and alphas with matplotlib."""
-        super(SplineModelGaussianMixture, self).display(precision, logalpha, 
-            name, figures[0])
+        super(SplineModelPCAGaussianMixture, self).display(precision,
+            logalpha, name, figures[0])
         figurenum = figures[1]
         if PLOTTING_AVAILABLE:
             print "Okay plotting"
@@ -65,8 +65,8 @@ class SplineModelPCAGaussianMixture(GaussianMixture):
                 t = internal_knots(coef2knots(perspline))
                 t = np.concatenate((np.zeros(4),t,np.ones(4)))
                 pyplot.subplot(rows, cols, clust+1)
-                spline1, spline2 = unmix(self._means[clust, :], 
-                    self._normmean, self._normstd)
+                means = self._pc.reconstruct(self._means[clust, :]).squeeze()
+                spline1, spline2 = unmix(means)
                 plot_from_spline(spline1)
                 plot_from_spline(spline2)
             pyplot.show()
