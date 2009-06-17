@@ -1,9 +1,7 @@
 """Traits-based tools for image preprocessing."""
 from itertools import islice
 import traceback
-
-# For our matplotlib figure
-from matplotlib.figure import Figure
+import sys
 
 # For image operations and file I/O, ndimage and pytables
 import tables
@@ -11,59 +9,145 @@ import numpy as np
 import scipy.ndimage as ndimage
 
 # Traits-related imports
-from enthought.traits.api import Int, Str
+from enthought.traits.api import Int, Float, Str, Bool, Range
 from enthought.traits.api import List, Tuple, Array
 from enthought.traits.api import HasTraits, Instance, Property
 
 # Chaco
-#from enthought.chaco.api import ArrayPlotData, Plot, bone, jet
-#from enthought.enable.component_editor import ComponentEditor
+from enthought.chaco.api import ArrayPlotData, Plot, bone
+from enthought.enable.component_editor import ComponentEditor
 
 # View components
-from enthought.traits.ui.api import View, Item, Group, VGroup
+from enthought.traits.ui.api import View, Item, Group, VGroup, HGroup
 
 # Editor components
 from enthought.traits.ui.api import RangeEditor
-from embedded_figure import MPLFigureEditor
 
 from rotation import fit_ellipse, align_image_to_ellipse
 from rotation import EllipseFitError, EllipseAlignmentError
-from tools import spline_features
+
+from scipy.interpolate import LSQUnivariateSpline
+
+DEBUG = False
+
+class MedialRepresentation(HasTraits):
+    """docstring for MedialRepresentation"""
+    _silhouette = Instance("ObjectSilhouette")
+    silhouette = Property(depends_on="_silhouette")
+    length = Property(Float, depends_on="silhouette")
+    medial_axis = Property(Array, depends_on="silhouette")
+    width_curve = Property(Array, depends_on="silhouette")
+    
+    def __init__(self, silhouette):
+        super(MedialRepresentation, self).__init__()
+        if not silhouette.is_aligned:
+            raise ValueError("Must be aligned version")
+        self._silhouette = silhouette
+        self._width_curve = None
+        self._medial_axis = None
+    
+    def _get_silhouette(self):
+        """Return the silhouette object."""
+        return getattr(self, "_silhouette", None)
+        
+    def _get_length(self):
+        """
+        Return the length of the medial axis (major axis of the 
+        silhouette).
+        """
+        return self.silhouette.image.shape[0]
+    
+    def _compute(self):
+        """
+        Do the computation necessary to fill the medial axis and width 
+        curve arrays.
+        """
+        self._medial_axis = np.zeros(self.length)
+        self._width_curve = np.zeros(self.length)
+        for index, row in enumerate(self.silhouette.image):
+            inked = np.where(row)[0]
+            if len(inked) == 0:
+                self._medial_axis[index] = self._medial_axis[:index].mean()
+                self._width_curve[index] = 0.
+            else:
+                first = inked.min()
+                last = inked.max()
+                self._medial_axis[index] = (first + last) / 2.0
+                self._width_curve[index] = last - first + 1
+        
+        #self._medial_axis_mean = self._medial_axis.mean()
+        self._medial_axis -= self._medial_axis.mean()
+        
+        self._medial_axis /= self.length
+        self._width_curve /= self.length
+    
+    def _get_medial_axis(self):
+        """Document me"""
+        if getattr(self, "_medial_axis", None) == None:
+            self._compute()
+        return self._medial_axis
+    
+    def _get_width_curve(self):
+        """Document me"""
+        if getattr(self, "_width_curve", None) == None:
+            self._compute()
+        return self._width_curve
+    
 
 class ObjectSilhouette(HasTraits):
     """Class representing a single cell silhouette in an image."""
     image = Array(dtype=bool) 
+    is_aligned = Bool()
+    _aligned_version = Instance("ObjectSilhouette")
+    _medial_repr = Instance("MedialRepresentation")
     
-    def __init__(self, image, angle=None):
+    # This could be a Delegate, except that we'd like to trigger creation
+    # on get
+    aligned_version = Property(depends_on='_aligned_version')
+    medial_repr = Property(depends_on='_medial_repr')
+    
+    def __init__(self, image, angle=None, is_aligned=False):
         """Document me."""
         super(ObjectSilhouette, self).__init__()
         self.image = image
-        self.angle = None
-    
-    
-    def aligned(self):
+        self.angle = angle
+        self.is_aligned = is_aligned
+        
+    ######################### Private interface ##########################
+    def _get_aligned_version(self):
         """
         Return an aligned version of this ObjectSilhouette
         """
-        image = self.image
-        try:
-            coeffs = fit_ellipse(*(np.where(image)))
-        except EllipseFitError:
-            traceback.print_exc()
-            return None
-        try:
-            rotated, angle = align_image_to_ellipse(coeffs, image)
-        except EllipseAlignmentError:
-            traceback.print_exc()
-            return None
-        return ObjectSilhouette(rotated, angle)
+        # If we _are_ the aligned version
+        if self.is_aligned:
+            return self
+        
+        # In case we have it cached
+        if not getattr(self, '_aligned_version', None):
+            image = self.image
+            try:
+                coeffs = fit_ellipse(*(np.where(image)))
+            except EllipseFitError:
+                traceback.print_exc()
+                return None
+            try:
+                rotated, angle = align_image_to_ellipse(coeffs, image)
+            except EllipseAlignmentError:
+                traceback.print_exc()
+                return None
+            self._aligned_version = ObjectSilhouette(rotated, angle, 
+                is_aligned=True)
+        return self._aligned_version
     
+    def _get_medial_repr(self):
+        """Return the medial representation object."""
+        if self.is_aligned:
+            if not getattr(self, "_medial_repr", None):
+                self._medial_repr = MedialRepresentation(self)
+            return self._medial_repr
+        else:
+            raise ValueError("Object %s is not aligned version" % repr(self))
     
-    def process_item(self, fig):
-        """Hook to draw all of the fun stuff."""
-        spline_features(self.aligned().image, plot=True, fig=fig)
-    
-
 
 class ImageSilhouette(HasTraits):
     """Class representing a silhouette image of segmented cells."""
@@ -75,6 +159,9 @@ class ImageSilhouette(HasTraits):
         
         # Label the binary array from the HDF5 file
         self.label_image, number = ndimage.label(node.read())
+        
+        if DEBUG:
+            print "%d objects segmented." % number
         
         # Get slices that index the array
         self.object_slices = ndimage.find_objects(self.label_image)
@@ -149,7 +236,7 @@ class DataSet(HasTraits):
             return Plate(node)
     
     def __contains__(self):
-        raise TypeError("Containment checking not supported")
+        raise TypeError("Containment checking not supported: %s" % str(self))
     
 
 class DataSetBrowser(HasTraits):
@@ -161,26 +248,41 @@ class DataSetBrowser(HasTraits):
     
     view = View(
             VGroup(
-                Item('figure', editor=MPLFigureEditor(), show_label=False), 
+                HGroup(
+                    Item('sil_plot', editor=ComponentEditor(size=(200, 200)), 
+                        show_label=False),
+                    Item('rotated_plot',
+                        editor=ComponentEditor(size=(200, 200)),
+                        show_label=False)
+                ),
+                Item('splines_plot', 
+                    editor=ComponentEditor(size=(250, 250)),
+                    show_label=False),
+
                 Group(Item('object_index', editor=RangeEditor(low=1, 
                     high_name='num_objects', mode='slider')),
                     Item('image_index', editor=RangeEditor(low=1, 
-                        high_name='num_objects', mode='slider')),
+                        high_name='num_images', mode='slider')),
                     Item('plate_index', editor=RangeEditor(low=1, 
-                            high_name='num_objects', mode='slider'))
-            )),
-            height=600,
-            width=700,
+                        high_name='num_plates', mode='slider')),
+                ),
+                HGroup(
+                    Item('num_internal_knots', 
+                        label='Number of internal spline knots'),
+                    Item('legend_visible', label='Legend visible?')
+                )
+            ),
+            height=700,
+            width=800,
             resizable=True)
     
-    
-    
     # Chaco plot
-    #plot = Instance(Plot)
-    
-    # matplotlib Figure instance
-    figure = Instance(Figure, ())
-    
+    gfp_plot = Instance(Plot)
+    sil_plot = Instance(Plot)
+    rotated_plot = Instance(Plot)
+    splines_plot = Instance(Plot)
+    legend_visible = Property(Bool)
+        
     # DataSet being viewed
     dataset = Instance(DataSet)
     
@@ -202,6 +304,7 @@ class DataSetBrowser(HasTraits):
     num_plates = Property(Int, depends_on='dataset')
     num_images = Property(Int, depends_on='current_plate')
     num_objects = Property(Int, depends_on='current_image')
+    num_internal_knots = Range(1, 20, 3)
     
     def __init__(self, dataset, **metadata):
         """Construct a DataSetBrowser from the specified DataSet object."""
@@ -210,18 +313,8 @@ class DataSetBrowser(HasTraits):
         self.current_plate = self.dataset[self.plate_index - 1]
         self.current_image = self.current_plate[self.image_index - 1]
         self.current_object = self.current_image[self.object_index - 1]
-        self.figure = Figure()
-        self.figure.add_subplot(211)
-        self.figure.add_subplot(212)
+        self.sil_plot = Plot()
         self._object_index_changed()
-        
-        # plotdata = ArrayPlotData(imagedata=self.current_object.image)
-        # plot = Plot(plotdata)
-        # xbounds = np.arange(self.current_object.image.shape[1])
-        # ybounds = np.arange(self.current_object.image.shape[0])
-        # plot.img_plot("imagedata", xbounds=xbounds,
-        #     ybounds=ybounds,colormap=bone)
-        # self.plot = plot
     
         
     ######################### Private interface ##########################    
@@ -248,7 +341,17 @@ class DataSetBrowser(HasTraits):
         """Handle object index slider changing."""
         try:
             self.current_object = self.current_image[self.object_index - 1]
-            self.current_object.process_item(self.figure)
+            
+            # Display 
+            sil = self.current_object.image
+            self._update_img_plot('sil_plot', sil, 'Extracted mask')
+            
+            # .T to get major axis horizontal
+            rotated = self.current_object.aligned_version.image.T 
+            self._update_img_plot('rotated_plot', rotated, 'Aligned mask')
+            
+            self._update_spline_plot()
+         
         except IndexError:
             self.current_object = None
     
@@ -264,3 +367,81 @@ class DataSetBrowser(HasTraits):
         """Return the number of objects in the currently viewed image."""
         return len(self.current_image)
     
+    def _update_img_plot(self, plot_name, image, title):
+        """Update an image plot."""
+        plotdata = ArrayPlotData(imagedata=image)
+        xbounds = (0, image.shape[1] - 1)
+        ybounds = (0, image.shape[0] - 1)
+        
+        plot = Plot(plotdata)
+        plot.aspect_ratio = float(xbounds[1]) / float(ybounds[1])
+        plot.img_plot("imagedata", colormap=bone, xbounds=xbounds,
+            ybounds=ybounds)
+        plot.title = title
+        
+        setattr(self, plot_name, plot)
+        getattr(self, plot_name).request_redraw()
+    
+    def _update_spline_plot(self):
+        """Update the spline plot."""
+        knots = np.mgrid[0:1:((self.num_internal_knots + 2)*1j)][1:-1]
+        medial_repr = self.current_object.aligned_version.medial_repr
+        dependent_variable = np.mgrid[0:1:(medial_repr.length * 1j)]
+        medial_spline = LSQUnivariateSpline(dependent_variable,
+            medial_repr.medial_axis, knots)
+        width_spline = LSQUnivariateSpline(dependent_variable,
+            medial_repr.width_curve, knots)
+        # sample at double the frequency
+        spline_dependent_variable = np.mgrid[0:1:(medial_repr.length * 2j)]
+        plotdata = ArrayPlotData(medial_x=dependent_variable,
+            medial_y=medial_repr.medial_axis,
+            width_x=dependent_variable,
+            width_y=medial_repr.width_curve,
+            medial_spline_x=spline_dependent_variable,
+            medial_spline_y=medial_spline(spline_dependent_variable),
+            width_spline_x=spline_dependent_variable,
+            width_spline_y=width_spline(spline_dependent_variable)
+        )
+        plot = Plot(plotdata)
+        plot.plot(("medial_x", "medial_y"), type="line", color="blue", 
+            line_style="dash", name="Original medial axis data")
+        plot.plot(("medial_spline_x", "medial_spline_y"), type="line",
+            color="green", line_style="dash",
+            name="Medial axis spline")
+        plot.plot(("width_x", "width_y"), type="line", color="blue",
+            name="Original width curve data")
+        plot.plot(("width_spline_x", "width_spline_y"), type="line", 
+            color="green", name="Width curve spline")
+        plot.legend.visible = True
+        plot.title = "Extracted splines"
+        plot.x_axis.title = "Normalized position on medial axis"
+        plot.y_axis.title = "Fraction of medial axis width"
+        self.splines_plot = plot
+        self.splines_plot.request_redraw()
+    
+    def _get_legend_visible(self):
+        """Hook to provide access to the legend's 'visible' property."""
+        return self.splines_plot.legend.visible
+    
+    def _set_legend_visible(self, visible):
+        """Hook to update the plot when we enable/disable the legend."""
+        self.splines_plot.legend.visible = visible
+        self.splines_plot.request_redraw()
+    
+    def _num_internal_knots_changed(self):
+        """Hook to update the plot when we chane the number of knots."""
+        self._update_spline_plot()
+    
+    
+def main():
+    """Initiates the Traits dialog."""
+    h5file = tables.openFile(sys.argv[1])
+    dataset = DataSet(h5file)
+    browser = DataSetBrowser(dataset)
+    browser.configure_traits(kind="livemodal")
+    del browser
+    del dataset
+    h5file.close()
+
+if __name__ == "__main__" and len(sys.argv) > 1:
+    main()
