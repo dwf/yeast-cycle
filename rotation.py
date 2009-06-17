@@ -11,6 +11,7 @@ class EllipseFitError(ValueError):
     Exception thrown if, for some reason, no ellipse can be fit to the
     given object. 
     """
+    pass
 
 
 class EllipseAlignmentError(ValueError):
@@ -58,8 +59,6 @@ def fit_ellipse(xcoord, ycoord, constraint=None):
     This code was directly adapted from MATLAB(tm) code provided in-text by
     the original authors of this method.
     """
-    
-    
     expansion = np.concatenate(((xcoord**2)[:, np.newaxis], 
         (xcoord * ycoord)[:, np.newaxis], (ycoord * ycoord)[:, np.newaxis], 
         xcoord[:, np.newaxis], ycoord[:, np.newaxis], 
@@ -129,4 +128,3 @@ def align_image_to_ellipse(coeffs, image):
         raise EllipseAlignmentError("Can't find object after final rotation.")
     
     return rotated[bounds], angle
-
