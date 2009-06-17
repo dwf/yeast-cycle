@@ -83,17 +83,17 @@ def spline_features(obj,axisknots=3,widthknots=3,order=4,plot=False,fig=None):
     width_splines = []
     medial_lengths = []
     count = 0
-    if plot:
-        axes = fig.axes[0]
-        axes.clear()
-        axes.axis('off')
-        axes.matshow((obj.T),cmap=matplotlib.cm.bone)
-    
+    # if plot:
+    #         axes = fig.axes[0]
+    #         axes.clear()
+    #         axes.axis('off')
+    #         axes.matshow((obj.T),cmap=matplotlib.cm.bone)
+    #     
     med, width = medial_axis_representation(obj)
     if len(med) <= order or len(med) <= axisknots:
        	raise ObjectTooSmallError()
     if plot:
-        axes = fig.axes[1]
+        axes = fig.axes[0]
         axes.clear()
         axes.plot(np.mgrid[0:1:(len(med)*1j)],med,label='Medial axis')
         axes.plot(np.mgrid[0:1:(len(width)*1j)],width,label='Width')
