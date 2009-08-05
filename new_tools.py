@@ -2,6 +2,7 @@
 from itertools import islice
 import traceback
 import sys
+import re
 
 # For image operations and file I/O, ndimage and pytables
 import tables
@@ -14,7 +15,7 @@ from enthought.traits.api import List, Tuple, Array
 from enthought.traits.api import HasTraits, Instance, Property
 
 # Chaco
-from enthought.chaco.api import ArrayPlotData, Plot, bone
+from enthought.chaco.api import ArrayPlotData, Plot, HPlotContainer, bone
 from enthought.enable.component_editor import ComponentEditor
 
 # View components
@@ -39,6 +40,7 @@ class MedialRepresentation(HasTraits):
     width_curve = Property(Array, depends_on="silhouette")
     
     def __init__(self, silhouette):
+        """Construct a MedialRepresentation from an ObjectSilhouette."""
         super(MedialRepresentation, self).__init__()
         if not silhouette.is_aligned:
             raise ValueError("Must be aligned version")
@@ -75,21 +77,19 @@ class MedialRepresentation(HasTraits):
                 self._medial_axis[index] = (first + last) / 2.0
                 self._width_curve[index] = last - first + 1
         
-        #self._medial_axis_mean = self._medial_axis.mean()
         self._medial_axis -= self._medial_axis.mean()
-        
         self._medial_axis /= self.length
         self._width_curve /= self.length
     
     def _get_medial_axis(self):
         """Document me"""
-        if getattr(self, "_medial_axis", None) == None:
+        if getattr(self, "_medial_axis", None) is None:
             self._compute()
         return self._medial_axis
     
     def _get_width_curve(self):
         """Document me"""
-        if getattr(self, "_width_curve", None) == None:
+        if getattr(self, "_width_curve", None) is None:
             self._compute()
         return self._width_curve
     
@@ -140,7 +140,10 @@ class ObjectSilhouette(HasTraits):
         return self._aligned_version
     
     def _get_medial_repr(self):
-        """Return the medial representation object."""
+        """
+        Return the medial representation object, constructing one if
+        necessary.
+        """
         if self.is_aligned:
             if not getattr(self, "_medial_repr", None):
                 self._medial_repr = MedialRepresentation(self)
@@ -153,8 +156,12 @@ class ImageSilhouette(HasTraits):
     """Class representing a silhouette image of segmented cells."""
     label_image = Array()
     object_slices = List(Tuple(slice, slice), ())
-    
+        
     def __init__(self, node):
+        """
+        Construct an ImageSilhouette object from a PyTables node containing
+        a binary mask array.
+        """
         super(ImageSilhouette, self).__init__()
         
         # Label the binary array from the HDF5 file
@@ -184,14 +191,20 @@ class ImageSilhouette(HasTraits):
 class Plate(HasTraits):
     """Class representing a single plate of imaged wells."""
     node = Instance(tables.Group)
+    h5file = Instance(tables.File)
     images = List(Str)
-    
-    def __init__(self, node):
+    def __init__(self, h5file, node):
+        """
+        Construct a Plate object from a PyTables File reference
+        and a node from that file representing the plate.
+        """
         super(Plate, self).__init__()
         self.node = node
-        for imnode in node._f_walkNodes('Leaf'):
-            self.images.append(imnode._v_pathname)
-
+        self.h5file = h5file
+        for groupnode in h5file.walkNodes(node, 'Group'):
+            if re.match(r'site\d', getattr(groupnode, '_v_name')):
+                self.images.append(getattr(groupnode, '_v_pathname'))
+    
     def __len__(self):
         return len(self.images)
 
@@ -201,11 +214,13 @@ class Plate(HasTraits):
                 *key.indices(len(self.images)))
             return [self[nkey] for nkey in indices]
         else:
-            image = self.node._v_file.getNode(self.images[key])
+            image = self.h5file.getNode(self.images[key] + '/mask')
             return ImageSilhouette(image)
 
     def __contains__(self):
         raise TypeError("Containment checking not supported: %s" % str(self))
+    
+
 
 class DataSet(HasTraits):
     """
@@ -221,7 +236,7 @@ class DataSet(HasTraits):
         """
         super(DataSet, self).__init__()
         for platenode in h5file.root:
-            self.plates.append(platenode._v_pathname)
+            self.plates.append(getattr(platenode, '_v_pathname'))
         self.h5file = h5file
     
     def __len__(self):
@@ -233,7 +248,7 @@ class DataSet(HasTraits):
             return [self[nkey] for nkey in indices]
         else:
             node = self.h5file.getNode(self.plates[key])
-            return Plate(node)
+            return Plate(self.h5file, node)
     
     def __contains__(self):
         raise TypeError("Containment checking not supported: %s" % str(self))
@@ -268,8 +283,7 @@ class DataSetBrowser(HasTraits):
                 ),
                 HGroup(
                     Item('num_internal_knots', 
-                        label='Number of internal spline knots'),
-                    Item('legend_visible', label='Legend visible?')
+                        label='Number of internal spline knots')
                 )
             ),
             height=700,
@@ -280,8 +294,7 @@ class DataSetBrowser(HasTraits):
     gfp_plot = Instance(Plot)
     sil_plot = Instance(Plot)
     rotated_plot = Instance(Plot)
-    splines_plot = Instance(Plot)
-    legend_visible = Property(Bool)
+    splines_plot = Instance(HPlotContainer)
         
     # DataSet being viewed
     dataset = Instance(DataSet)
@@ -314,8 +327,7 @@ class DataSetBrowser(HasTraits):
         self.current_image = self.current_plate[self.image_index - 1]
         self.current_object = self.current_image[self.object_index - 1]
         self.sil_plot = Plot()
-        self._object_index_changed()
-    
+        self._object_index_changed()  
         
     ######################### Private interface ##########################    
 
@@ -387,58 +399,96 @@ class DataSetBrowser(HasTraits):
         knots = np.mgrid[0:1:((self.num_internal_knots + 2)*1j)][1:-1]
         medial_repr = self.current_object.aligned_version.medial_repr
         dependent_variable = np.mgrid[0:1:(medial_repr.length * 1j)]
-        medial_spline = LSQUnivariateSpline(dependent_variable,
+        m_spline = LSQUnivariateSpline(dependent_variable,
             medial_repr.medial_axis, knots)
-        width_spline = LSQUnivariateSpline(dependent_variable,
+        w_spline = LSQUnivariateSpline(dependent_variable,
             medial_repr.width_curve, knots)
         # sample at double the frequency
-        spline_dependent_variable = np.mgrid[0:1:(medial_repr.length * 2j)]
-        plotdata = ArrayPlotData(medial_x=dependent_variable,
-            medial_y=medial_repr.medial_axis,
-            width_x=dependent_variable,
-            width_y=medial_repr.width_curve,
-            medial_spline_x=spline_dependent_variable,
-            medial_spline_y=medial_spline(spline_dependent_variable),
-            width_spline_x=spline_dependent_variable,
-            width_spline_y=width_spline(spline_dependent_variable)
-        )
-        plot = Plot(plotdata)
-        plot.plot(("medial_x", "medial_y"), type="line", color="blue", 
-            line_style="dash", name="Original medial axis data")
-        plot.plot(("medial_spline_x", "medial_spline_y"), type="line",
-            color="green", line_style="dash",
-            name="Medial axis spline")
-        plot.plot(("width_x", "width_y"), type="line", color="blue",
-            name="Original width curve data")
-        plot.plot(("width_spline_x", "width_spline_y"), type="line", 
-            color="green", name="Width curve spline")
-        plot.legend.visible = True
-        plot.title = "Extracted splines"
-        plot.x_axis.title = "Normalized position on medial axis"
-        plot.y_axis.title = "Fraction of medial axis width"
-        self.splines_plot = plot
-        self.splines_plot.request_redraw()
-    
-    def _get_legend_visible(self):
-        """Hook to provide access to the legend's 'visible' property."""
-        return self.splines_plot.legend.visible
-    
-    def _set_legend_visible(self, visible):
-        """Hook to update the plot when we enable/disable the legend."""
-        self.splines_plot.legend.visible = visible
-        self.splines_plot.request_redraw()
+        spl_dep_var = np.mgrid[0:1:(medial_repr.length * 2j)]
+        plot = self.splines_plot
+        if plot is None:
+            # Render the plot for the first time.
+            plotdata = ArrayPlotData(medial_x=dependent_variable,
+                medial_y=medial_repr.medial_axis,
+                width_x=dependent_variable,
+                width_y=medial_repr.width_curve,
+                medial_spline_x=spl_dep_var,
+                medial_spline_y=m_spline(spl_dep_var),
+                width_spline_x=spl_dep_var,
+                width_spline_y=w_spline(spl_dep_var)
+            )
+            plot = Plot(plotdata)
+            
+            # Medial data
+            self._medial_data_renderer, = plot.plot(("medial_x", "medial_y"), 
+                type="line", color="blue", line_style="dash", 
+                name="Original medial axis data")
+            
+            # Width data 
+            self._width_data_renderer, = plot.plot(("width_x", "width_y"),
+                type="line", color="blue", name="Original width curve data")
+            
+            # Medial spline
+            self._medial_spline_renderer, = plot.plot(("medial_spline_x",
+                "medial_spline_y"), type="line", color="green",
+                line_style="dash", name="Medial axis spline")
+                        
+            # Width spline
+            self._width_spline_renderer, = plot.plot(("width_spline_x",
+                "width_spline_y"), type="line", color="green", 
+                name="Width curve spline")
+            
+            # Titles for plot & axes
+            plot.title = "Extracted splines"
+            plot.x_axis.title = "Normalized position on medial axis"
+            plot.y_axis.title = "Fraction of medial axis width"
+            
+            
+            # Legend mangling stuff
+            legend = plot.legend
+            plot.legend = None
+            legend.set(
+                    component = None,
+                    visible = True,
+                    resizable = "",
+                    bounds = [200,100],
+                    padding_top = plot.padding_top)
+            container = HPlotContainer(plot, legend, valign="top", 
+                                       bgcolor="transparent", spacing=-5)
+            plot.print_traits()
+            self.splines_plot = container
+        else:
+            def render_update(renderer, index, value):
+                renderer.index.set_data(index)
+                renderer.value.set_data(value)
+            
+            # Update the real medial curve
+            self._medial_data_renderer.index.set_data(dependent_variable)
+            self._medial_data_renderer.value.set_data(medial_repr.medial_axis)
+            
+            # Update the real width curve
+            self._width_data_renderer.index.set_data(dependent_variable)
+            self._width_data_renderer.value.set_data(medial_repr.width_curve)
+
+            # Update the fitted medial spline
+            self._medial_spline_renderer.index.set_data(spl_dep_var)
+            self._medial_spline_renderer.value.set_data(m_spline(spl_dep_var))
+            
+            # Update the fitted width spline
+            self._width_spline_renderer.index.set_data(spl_dep_var)
+            self._width_spline_renderer.value.set_data(w_spline(spl_dep_var))
     
     def _num_internal_knots_changed(self):
         """Hook to update the plot when we chane the number of knots."""
         self._update_spline_plot()
     
-    
+
 def main():
     """Initiates the Traits dialog."""
     h5file = tables.openFile(sys.argv[1])
     dataset = DataSet(h5file)
     browser = DataSetBrowser(dataset)
-    browser.configure_traits(kind="livemodal")
+    browser.configure_traits()#kind="livemodal")
     del browser
     del dataset
     h5file.close()
