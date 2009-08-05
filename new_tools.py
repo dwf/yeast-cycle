@@ -14,7 +14,7 @@ from enthought.traits.api import List, Tuple, Array
 from enthought.traits.api import HasTraits, Instance, Property
 
 # Chaco
-from enthought.chaco.api import ArrayPlotData, Plot, bone
+from enthought.chaco.api import ArrayPlotData, Plot, HPlotContainer, bone
 from enthought.enable.component_editor import ComponentEditor
 
 # View components
@@ -268,8 +268,8 @@ class DataSetBrowser(HasTraits):
                 ),
                 HGroup(
                     Item('num_internal_knots', 
-                        label='Number of internal spline knots'),
-                    Item('legend_visible', label='Legend visible?')
+                        label='Number of internal spline knots')
+                    #Item('legend_visible', label='Legend visible?')
                 )
             ),
             height=700,
@@ -280,8 +280,8 @@ class DataSetBrowser(HasTraits):
     gfp_plot = Instance(Plot)
     sil_plot = Instance(Plot)
     rotated_plot = Instance(Plot)
-    splines_plot = Instance(Plot)
-    legend_visible = Property(Bool)
+    splines_plot = Instance(HPlotContainer)
+    #legend_visible = Property(Bool)
         
     # DataSet being viewed
     dataset = Instance(DataSet)
@@ -314,8 +314,7 @@ class DataSetBrowser(HasTraits):
         self.current_image = self.current_plate[self.image_index - 1]
         self.current_object = self.current_image[self.object_index - 1]
         self.sil_plot = Plot()
-        self._object_index_changed()
-    
+        self._object_index_changed()  
         
     ######################### Private interface ##########################    
 
@@ -400,7 +399,9 @@ class DataSetBrowser(HasTraits):
             medial_spline_x=spline_dependent_variable,
             medial_spline_y=medial_spline(spline_dependent_variable),
             width_spline_x=spline_dependent_variable,
-            width_spline_y=width_spline(spline_dependent_variable)
+            width_spline_y=width_spline(spline_dependent_variable),
+            curvature_x=dependent_variable[2:],
+            curvature_y=np.diff(ndimage.gaussian_filter1d(medial_repr.width_curve, 1.4))
         )
         plot = Plot(plotdata)
         plot.plot(("medial_x", "medial_y"), type="line", color="blue", 
@@ -412,22 +413,35 @@ class DataSetBrowser(HasTraits):
             name="Original width curve data")
         plot.plot(("width_spline_x", "width_spline_y"), type="line", 
             color="green", name="Width curve spline")
+        plot.plot(("width_x", "curvature_y"), type="line", 
+            color="red", name="Second derivative")
         plot.legend.visible = True
         plot.title = "Extracted splines"
         plot.x_axis.title = "Normalized position on medial axis"
         plot.y_axis.title = "Fraction of medial axis width"
-        self.splines_plot = plot
+        
+        # Legend mangling stuff
+        legend = plot.legend
+        plot.legend = None
+        legend.set(
+                component = None,
+                visible = True,
+                resizable = "",
+                bounds = [200,100],
+                padding_top = plot.padding_top)
+        container = HPlotContainer(plot, legend, valign="center", bgcolor="transparent")
+        self.splines_plot = container
         self.splines_plot.request_redraw()
     
-    def _get_legend_visible(self):
-        """Hook to provide access to the legend's 'visible' property."""
-        return self.splines_plot.legend.visible
-    
-    def _set_legend_visible(self, visible):
-        """Hook to update the plot when we enable/disable the legend."""
-        self.splines_plot.legend.visible = visible
-        self.splines_plot.request_redraw()
-    
+    # def _get_legend_visible(self):
+    #         """Hook to provide access to the legend's 'visible' property."""
+    #         return self.splines_plot.legend.visible
+    #     
+    #     def _set_legend_visible(self, visible):
+    #         """Hook to update the plot when we enable/disable the legend."""
+    #         self.splines_plot.legend.visible = visible
+    #         self.splines_plot.request_redraw()
+    #     
     def _num_internal_knots_changed(self):
         """Hook to update the plot when we chane the number of knots."""
         self._update_spline_plot()
