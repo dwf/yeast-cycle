@@ -2,7 +2,6 @@
 from itertools import islice
 import traceback
 import sys
-import re
 
 # For image operations and file I/O, ndimage and pytables
 import tables
@@ -15,7 +14,7 @@ from enthought.traits.api import List, Tuple, Array
 from enthought.traits.api import HasTraits, Instance, Property
 
 # Chaco
-from enthought.chaco.api import ArrayPlotData, Plot, bone
+from enthought.chaco.api import ArrayPlotData, Plot, HPlotContainer, bone
 from enthought.enable.component_editor import ComponentEditor
 
 # View components
@@ -283,8 +282,8 @@ class DataSetBrowser(HasTraits):
                 ),
                 HGroup(
                     Item('num_internal_knots', 
-                        label='Number of internal spline knots'),
-                    Item('legend_visible', label='Legend visible?')
+                        label='Number of internal spline knots')
+                    #Item('legend_visible', label='Legend visible?')
                 )
             ),
             height=700,
@@ -295,8 +294,8 @@ class DataSetBrowser(HasTraits):
     gfp_plot = Instance(Plot)
     sil_plot = Instance(Plot)
     rotated_plot = Instance(Plot)
-    splines_plot = Instance(Plot)
-    legend_visible = Property(Bool)
+    splines_plot = Instance(HPlotContainer)
+    #legend_visible = Property(Bool)
         
     # DataSet being viewed
     dataset = Instance(DataSet)
@@ -329,8 +328,7 @@ class DataSetBrowser(HasTraits):
         self.current_image = self.current_plate[self.image_index - 1]
         self.current_object = self.current_image[self.object_index - 1]
         self.sil_plot = Plot()
-        self._object_index_changed()
-    
+        self._object_index_changed()  
         
     ######################### Private interface ##########################    
 
@@ -407,79 +405,57 @@ class DataSetBrowser(HasTraits):
         w_spline = LSQUnivariateSpline(dependent_variable,
             medial_repr.width_curve, knots)
         # sample at double the frequency
-        spl_dep_var = np.mgrid[0:1:(medial_repr.length * 2j)]
-        plot = self.splines_plot
-        if plot is None:
-            # Render the plot for the first time.
-            plotdata = ArrayPlotData(medial_x=dependent_variable,
-                medial_y=medial_repr.medial_axis,
-                width_x=dependent_variable,
-                width_y=medial_repr.width_curve,
-                medial_spline_x=spl_dep_var,
-                medial_spline_y=m_spline(spl_dep_var),
-                width_spline_x=spl_dep_var,
-                width_spline_y=w_spline(spl_dep_var)
-            )
-            plot = Plot(plotdata)
-            
-            
-            # Medial data
-            self._medial_data_renderer, = plot.plot(("medial_x", "medial_y"), 
-                type="line", color="blue", line_style="dash", 
-                name="Original medial axis data")
-            
-            # Width data 
-            self._width_data_renderer, = plot.plot(("width_x", "width_y"),
-                type="line", color="blue", name="Original width curve data")
-            
-            # Medial spline
-            self._medial_spline_renderer, = plot.plot(("medial_spline_x",
-                "medial_spline_y"), type="line", color="green",
-                line_style="dash", name="Medial axis spline")
-                        
-            # Width spline
-            self._width_spline_renderer, = plot.plot(("width_spline_x",
-                "width_spline_y"), type="line", color="green", 
-                name="Width curve spline")
-            
-            # Titles for plot & axes
-            plot.title = "Extracted splines"
-            plot.x_axis.title = "Normalized position on medial axis"
-            plot.y_axis.title = "Fraction of medial axis width"
-            self.splines_plot = plot
-        else:
-            def render_update(renderer, index, value):
-                renderer.index.set_data(index)
-                renderer.value.set_data(value)
-            
-            # Update the real medial curve
-            self._medial_data_renderer.index.set_data(dependent_variable)
-            self._medial_data_renderer.value.set_data(medial_repr.medial_axis)
-            
-            # Update the real width curve
-            self._width_data_renderer.index.set_data(dependent_variable)
-            self._width_data_renderer.value.set_data(medial_repr.width_curve)
-
-            # Update the fitted medial spline
-            self._medial_spline_renderer.index.set_data(spl_dep_var)
-            self._medial_spline_renderer.value.set_data(m_spline(spl_dep_var))
-            
-            # Update the fitted width spline
-            self._width_spline_renderer.index.set_data(spl_dep_var)
-            self._width_spline_renderer.value.set_data(w_spline(spl_dep_var))
+        spline_dependent_variable = np.mgrid[0:1:(medial_repr.length * 2j)]
+        plotdata = ArrayPlotData(medial_x=dependent_variable,
+            medial_y=medial_repr.medial_axis,
+            width_x=dependent_variable,
+            width_y=medial_repr.width_curve,
+            medial_spline_x=spline_dependent_variable,
+            medial_spline_y=medial_spline(spline_dependent_variable),
+            width_spline_x=spline_dependent_variable,
+            width_spline_y=width_spline(spline_dependent_variable),
+            curvature_x=dependent_variable[2:],
+            curvature_y=np.diff(ndimage.gaussian_filter1d(medial_repr.width_curve, 1.4))
+        )
+        plot = Plot(plotdata)
+        plot.plot(("medial_x", "medial_y"), type="line", color="blue", 
+            line_style="dash", name="Original medial axis data")
+        plot.plot(("medial_spline_x", "medial_spline_y"), type="line",
+            color="green", line_style="dash",
+            name="Medial axis spline")
+        plot.plot(("width_x", "width_y"), type="line", color="blue",
+            name="Original width curve data")
+        plot.plot(("width_spline_x", "width_spline_y"), type="line", 
+            color="green", name="Width curve spline")
+        plot.plot(("width_x", "curvature_y"), type="line", 
+            color="red", name="Second derivative")
+        plot.legend.visible = True
+        plot.title = "Extracted splines"
+        plot.x_axis.title = "Normalized position on medial axis"
+        plot.y_axis.title = "Fraction of medial axis width"
         
-        # No matter what, refresh        
-        plot.request_redraw()
-    
-    def _get_legend_visible(self):
-        """Hook to provide access to the legend's 'visible' property."""
-        return self.splines_plot.legend.visible
-    
-    def _set_legend_visible(self, visible):
-        """Hook to update the plot when we enable/disable the legend."""
-        self.splines_plot.legend.visible = visible
+        # Legend mangling stuff
+        legend = plot.legend
+        plot.legend = None
+        legend.set(
+                component = None,
+                visible = True,
+                resizable = "",
+                bounds = [200,100],
+                padding_top = plot.padding_top)
+        container = HPlotContainer(plot, legend, valign="center", bgcolor="transparent")
+        self.splines_plot = container
         self.splines_plot.request_redraw()
     
+    # def _get_legend_visible(self):
+    #         """Hook to provide access to the legend's 'visible' property."""
+    #         return self.splines_plot.legend.visible
+    #     
+    #     def _set_legend_visible(self, visible):
+    #         """Hook to update the plot when we enable/disable the legend."""
+    #         self.splines_plot.legend.visible = visible
+    #         self.splines_plot.request_redraw()
+    #     
     def _num_internal_knots_changed(self):
         """Hook to update the plot when we chane the number of knots."""
         self._update_spline_plot()
