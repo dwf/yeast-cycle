@@ -8,6 +8,7 @@ import re
 import tables
 import numpy as np
 import scipy.ndimage as ndimage
+from util.line_overlay import Line
 
 # Traits-related imports
 from enthought.traits.api import Int, Float, Str, Bool, Range
@@ -264,11 +265,10 @@ class DataSetBrowser(HasTraits):
     view = View(
             VGroup(
                 HGroup(
-                    Item('sil_plot', editor=ComponentEditor(size=(200, 200)), 
-                        show_label=False),
-                    Item('rotated_plot',
-                        editor=ComponentEditor(size=(200, 200)),
-                        show_label=False)
+                    Item('image_plots', 
+                         editor=ComponentEditor(size=(200, 200)),
+                         show_label=False
+                    ),
                 ),
                 Item('splines_plot', 
                     editor=ComponentEditor(size=(250, 250)),
@@ -283,7 +283,9 @@ class DataSetBrowser(HasTraits):
                 ),
                 HGroup(
                     Item('num_internal_knots', 
-                        label='Number of internal spline knots')
+                        label='Number of internal spline knots'),
+                    Item('smoothing', 
+                        label='Amount of smoothing applied')
                 )
             ),
             height=700,
@@ -293,6 +295,7 @@ class DataSetBrowser(HasTraits):
     # Chaco plot
     gfp_plot = Instance(Plot)
     sil_plot = Instance(Plot)
+    image_plots = Instance(HPlotContainer)
     rotated_plot = Instance(Plot)
     splines_plot = Instance(HPlotContainer)
         
@@ -318,6 +321,8 @@ class DataSetBrowser(HasTraits):
     num_images = Property(Int, depends_on='current_plate')
     num_objects = Property(Int, depends_on='current_image')
     num_internal_knots = Range(1, 20, 3)
+    smoothing = Range(0.0, 2.0, 0)
+    
     
     def __init__(self, dataset, **metadata):
         """Construct a DataSetBrowser from the specified DataSet object."""
@@ -362,6 +367,10 @@ class DataSetBrowser(HasTraits):
             rotated = self.current_object.aligned_version.image.T 
             self._update_img_plot('rotated_plot', rotated, 'Aligned mask')
             
+            self.image_plots = HPlotContainer(self.sil_plot, self.rotated_plot,
+                                              valign="top", 
+                                              bgcolor="transparent")
+            
             self._update_spline_plot()
          
         except IndexError:
@@ -399,6 +408,9 @@ class DataSetBrowser(HasTraits):
         knots = np.mgrid[0:1:((self.num_internal_knots + 2)*1j)][1:-1]
         medial_repr = self.current_object.aligned_version.medial_repr
         dependent_variable = np.mgrid[0:1:(medial_repr.length * 1j)]
+        curv = np.diff(smoothed, 2)
+        laplacian = ndimage.gaussian_laplace(medial_repr.width_curve, 
+            self.smoothing, mode='constant', cval=np.nan)
         m_spline = LSQUnivariateSpline(dependent_variable,
             medial_repr.medial_axis, knots)
         w_spline = LSQUnivariateSpline(dependent_variable,
@@ -415,31 +427,50 @@ class DataSetBrowser(HasTraits):
                 medial_spline_x=spl_dep_var,
                 medial_spline_y=m_spline(spl_dep_var),
                 width_spline_x=spl_dep_var,
-                width_spline_y=w_spline(spl_dep_var)
+                width_spline_y=w_spline(spl_dep_var),
+                second_deriv_x=dependent_variable[1:-1],
+                second_deriv_y=curv,
+                smoothed_y=smoothed,
+                laplacian_y=laplacian,
             )
             plot = Plot(plotdata)
             
             # Medial data
-            self._medial_data_renderer, = plot.plot(("medial_x", "medial_y"), 
-                type="line", color="blue", line_style="dash", 
-                name="Original medial axis data")
+            # self._medial_data_renderer, = plot.plot(("medial_x", "medial_y"), 
+            #                 type="line", color="blue", line_style="dash", 
+            #                 name="Original medial axis data")
             
             # Width data 
             self._width_data_renderer, = plot.plot(("width_x", "width_y"),
                 type="line", color="blue", name="Original width curve data")
             
             # Medial spline
-            self._medial_spline_renderer, = plot.plot(("medial_spline_x",
-                "medial_spline_y"), type="line", color="green",
-                line_style="dash", name="Medial axis spline")
+            # self._medial_spline_renderer, = plot.plot(("medial_spline_x",
+            #                 "medial_spline_y"), type="line", color="green",
+            #                 line_style="dash", name="Medial axis spline")
                         
             # Width spline
-            self._width_spline_renderer, = plot.plot(("width_spline_x",
-                "width_spline_y"), type="line", color="green", 
-                name="Width curve spline")
+            # self._width_spline_renderer, = plot.plot(("width_spline_x",
+            #                 "width_spline_y"), type="line", color="green", 
+            #                 name="Width curve spline")
             
+            # Smoothed 
+            # self._smoothed_renderer, = plot.plot(("width_x",
+            #                 "smoothed_y"), type="line", color="purple", 
+            #                 name="Smoothed width curve")
+            #             
+            
+            # Second derivative of the smoothed width curve.
+            # self._second_deriv_renderer, = plot.plot(("second_deriv_x",
+            #                 "second_deriv_y"), type="line", color="red", 
+            #                 name="Second diff of (smoothed) width")
+            #             
+            self._laplacian_renderer, = plot.plot(("width_x",
+                            "laplacian_y"), type="line", color="black", 
+                            name="Laplacian-of-Gaussian")
+            #             
             # Titles for plot & axes
-            plot.title = "Extracted splines"
+            plot.title = "Width curves"
             plot.x_axis.title = "Normalized position on medial axis"
             plot.y_axis.title = "Fraction of medial axis width"
             
@@ -451,37 +482,50 @@ class DataSetBrowser(HasTraits):
                     component = None,
                     visible = True,
                     resizable = "",
-                    bounds = [200,100],
+                    auto_size=True, 
+                    bounds = [250, 70],
                     padding_top = plot.padding_top)
             container = HPlotContainer(plot, legend, valign="top", 
                                        bgcolor="transparent", spacing=-5)
-            plot.print_traits()
             self.splines_plot = container
         else:
-            def render_update(renderer, index, value):
-                renderer.index.set_data(index)
-                renderer.value.set_data(value)
+            # def render_update(renderer, index, value):
+            #                 renderer.index.set_data(index)
+            #                 renderer.value.set_data(value)
             
-            # Update the real medial curve
-            self._medial_data_renderer.index.set_data(dependent_variable)
-            self._medial_data_renderer.value.set_data(medial_repr.medial_axis)
+            # # Update the real medial curve
+            # self._medial_data_renderer.index.set_data(dependent_variable)
+            # self._medial_data_renderer.value.set_data(medial_repr.medial_axis)
             
             # Update the real width curve
             self._width_data_renderer.index.set_data(dependent_variable)
             self._width_data_renderer.value.set_data(medial_repr.width_curve)
 
-            # Update the fitted medial spline
-            self._medial_spline_renderer.index.set_data(spl_dep_var)
-            self._medial_spline_renderer.value.set_data(m_spline(spl_dep_var))
+            # # Update the fitted medial spline
+            # self._medial_spline_renderer.index.set_data(spl_dep_var)
+            # self._medial_spline_renderer.value.set_data(m_spline(spl_dep_var))
+            # 
+            # # Update the fitted width spline
+            # self._width_spline_renderer.index.set_data(spl_dep_var)
+            # self._width_spline_renderer.value.set_data(w_spline(spl_dep_var))
             
-            # Update the fitted width spline
-            self._width_spline_renderer.index.set_data(spl_dep_var)
-            self._width_spline_renderer.value.set_data(w_spline(spl_dep_var))
+            #self._second_deriv_renderer.index.set_data(dependent_variable[1:-1])
+            #self._second_deriv_renderer.value.set_data(curv)
+
+            #self._smoothed_renderer.index.set_data(dependent_variable)
+            #self._smoothed_renderer.value.set_data(smoothed)
+            
+            self._laplacian_renderer.index.set_data(dependent_variable)
+            self._laplacian_renderer.value.set_data(laplacian)
+            
     
     def _num_internal_knots_changed(self):
-        """Hook to update the plot when we chane the number of knots."""
+        """Hook to update the plot when we change the number of knots."""
         self._update_spline_plot()
     
+    def _smoothing_changed(self):
+        """Hook to update the plot when we change the smoothing parameter."""
+        self._update_spline_plot()
 
 def main():
     """Initiates the Traits dialog."""
