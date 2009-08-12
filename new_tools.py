@@ -16,7 +16,7 @@ from enthought.traits.api import List, Tuple, Array
 from enthought.traits.api import HasTraits, Instance, Property
 
 # Chaco
-from enthought.chaco.api import ArrayPlotData, Plot, HPlotContainer, bone
+from enthought.chaco.api import ArrayPlotData, Plot, HPlotContainer, bone, VPlotContainer, GridPlotContainer
 from enthought.enable.component_editor import ComponentEditor
 
 # View components
@@ -266,14 +266,14 @@ class DataSetBrowser(HasTraits):
             VGroup(
                 HGroup(
                     Item('image_plots', 
-                         editor=ComponentEditor(size=(200, 200)),
+                         editor=ComponentEditor(size=(50, 50)),
                          show_label=False
                     ),
                 ),
-                Item('splines_plot', 
-                    editor=ComponentEditor(size=(250, 250)),
-                    show_label=False),
-
+                HGroup(
+                    Item('plots', editor=ComponentEditor(size=(250, 300)),
+                            show_label=False),
+                ),
                 Group(Item('object_index', editor=RangeEditor(low=1, 
                     high_name='num_objects', mode='slider')),
                     Item('image_index', editor=RangeEditor(low=1, 
@@ -297,8 +297,8 @@ class DataSetBrowser(HasTraits):
     sil_plot = Instance(Plot)
     image_plots = Instance(HPlotContainer)
     rotated_plot = Instance(Plot)
-    splines_plot = Instance(HPlotContainer)
-        
+    plots = Instance(GridPlotContainer)
+    #legends = Instance(VPlotContainer)    
     # DataSet being viewed
     dataset = Instance(DataSet)
     
@@ -367,7 +367,8 @@ class DataSetBrowser(HasTraits):
             rotated = self.current_object.aligned_version.image.T 
             self._update_img_plot('rotated_plot', rotated, 'Aligned mask')
             
-            self.image_plots = HPlotContainer(self.sil_plot, self.rotated_plot,
+            self.image_plots = HPlotContainer(self.sil_plot,
+                                              self.rotated_plot,
                                               valign="top", 
                                               bgcolor="transparent")
             
@@ -408,7 +409,6 @@ class DataSetBrowser(HasTraits):
         knots = np.mgrid[0:1:((self.num_internal_knots + 2)*1j)][1:-1]
         medial_repr = self.current_object.aligned_version.medial_repr
         dependent_variable = np.mgrid[0:1:(medial_repr.length * 1j)]
-        curv = np.diff(smoothed, 2)
         laplacian = ndimage.gaussian_laplace(medial_repr.width_curve, 
             self.smoothing, mode='constant', cval=np.nan)
         m_spline = LSQUnivariateSpline(dependent_variable,
@@ -417,8 +417,8 @@ class DataSetBrowser(HasTraits):
             medial_repr.width_curve, knots)
         # sample at double the frequency
         spl_dep_var = np.mgrid[0:1:(medial_repr.length * 2j)]
-        plot = self.splines_plot
-        if plot is None:
+        plots = self.plots
+        if plots is None:
             # Render the plot for the first time.
             plotdata = ArrayPlotData(medial_x=dependent_variable,
                 medial_y=medial_repr.medial_axis,
@@ -428,52 +428,45 @@ class DataSetBrowser(HasTraits):
                 medial_spline_y=m_spline(spl_dep_var),
                 width_spline_x=spl_dep_var,
                 width_spline_y=w_spline(spl_dep_var),
-                second_deriv_x=dependent_variable[1:-1],
-                second_deriv_y=curv,
-                smoothed_y=smoothed,
                 laplacian_y=laplacian,
             )
             plot = Plot(plotdata)
             
             # Medial data
-            # self._medial_data_renderer, = plot.plot(("medial_x", "medial_y"), 
-            #                 type="line", color="blue", line_style="dash", 
-            #                 name="Original medial axis data")
+            self._medial_data_renderer, = plot.plot(("medial_x", "medial_y"), 
+                             type="line", color="blue", line_style="dash", 
+                             name="Original medial axis data")
             
             # Width data 
             self._width_data_renderer, = plot.plot(("width_x", "width_y"),
                 type="line", color="blue", name="Original width curve data")
             
             # Medial spline
-            # self._medial_spline_renderer, = plot.plot(("medial_spline_x",
-            #                 "medial_spline_y"), type="line", color="green",
-            #                 line_style="dash", name="Medial axis spline")
+            self._medial_spline_renderer, = plot.plot(("medial_spline_x",
+                            "medial_spline_y"), type="line", color="green",
+                            line_style="dash", name="Medial axis spline")
                         
             # Width spline
-            # self._width_spline_renderer, = plot.plot(("width_spline_x",
-            #                 "width_spline_y"), type="line", color="green", 
-            #                 name="Width curve spline")
+            self._width_spline_renderer, = plot.plot(("width_spline_x",
+                            "width_spline_y"), type="line", color="green", 
+                            name="Width curve spline")
             
-            # Smoothed 
-            # self._smoothed_renderer, = plot.plot(("width_x",
-            #                 "smoothed_y"), type="line", color="purple", 
-            #                 name="Smoothed width curve")
-            #             
             
-            # Second derivative of the smoothed width curve.
-            # self._second_deriv_renderer, = plot.plot(("second_deriv_x",
-            #                 "second_deriv_y"), type="line", color="red", 
-            #                 name="Second diff of (smoothed) width")
-            #             
-            self._laplacian_renderer, = plot.plot(("width_x",
-                            "laplacian_y"), type="line", color="black", 
+            filterdata = ArrayPlotData(
+                            x=dependent_variable,
+                            laplacian=laplacian
+                        )
+            filterplot = Plot(filterdata)
+            self._laplacian_renderer, = filterplot.plot(("x",
+                            "laplacian"), type="line", color="black", 
                             name="Laplacian-of-Gaussian")
-            #             
+            
             # Titles for plot & axes
             plot.title = "Width curves"
             plot.x_axis.title = "Normalized position on medial axis"
             plot.y_axis.title = "Fraction of medial axis width"
             
+            #filterplot.title = "Filters"
             
             # Legend mangling stuff
             legend = plot.legend
@@ -485,29 +478,42 @@ class DataSetBrowser(HasTraits):
                     auto_size=True, 
                     bounds = [250, 70],
                     padding_top = plot.padding_top)
-            container = HPlotContainer(plot, legend, valign="top", 
-                                       bgcolor="transparent", spacing=-5)
-            self.splines_plot = container
+            
+            filterlegend = filterplot.legend
+            filterplot.legend = None
+            filterlegend.set(
+                    component = None,
+                    visible = True,
+                    resizable = "",
+                    auto_size=True, 
+                    bounds = [250, 50],
+                    padding_top = filterplot.padding_top)
+            
+            self.plots = GridPlotContainer(plot, legend, filterplot,
+                                        filterlegend, shape=(2,2),
+                                        valign="top", bgcolor="transparent")
+            
+            
         else:
             # def render_update(renderer, index, value):
             #                 renderer.index.set_data(index)
             #                 renderer.value.set_data(value)
             
             # # Update the real medial curve
-            # self._medial_data_renderer.index.set_data(dependent_variable)
-            # self._medial_data_renderer.value.set_data(medial_repr.medial_axis)
+            self._medial_data_renderer.index.set_data(dependent_variable)
+            self._medial_data_renderer.value.set_data(medial_repr.medial_axis)
             
             # Update the real width curve
             self._width_data_renderer.index.set_data(dependent_variable)
             self._width_data_renderer.value.set_data(medial_repr.width_curve)
 
             # # Update the fitted medial spline
-            # self._medial_spline_renderer.index.set_data(spl_dep_var)
-            # self._medial_spline_renderer.value.set_data(m_spline(spl_dep_var))
+            self._medial_spline_renderer.index.set_data(spl_dep_var)
+            self._medial_spline_renderer.value.set_data(m_spline(spl_dep_var))
             # 
             # # Update the fitted width spline
-            # self._width_spline_renderer.index.set_data(spl_dep_var)
-            # self._width_spline_renderer.value.set_data(w_spline(spl_dep_var))
+            self._width_spline_renderer.index.set_data(spl_dep_var)
+            self._width_spline_renderer.value.set_data(w_spline(spl_dep_var))
             
             #self._second_deriv_renderer.index.set_data(dependent_variable[1:-1])
             #self._second_deriv_renderer.value.set_data(curv)
