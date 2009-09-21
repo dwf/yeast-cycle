@@ -106,13 +106,6 @@ class ObjectSilhouette(HasTraits):
     # on get
     aligned_version = Property(depends_on='_aligned_version')
     medial_repr = Property(depends_on='_medial_repr')
-    
-    def __init__(self, image, angle=None, is_aligned=False):
-        """Document me."""
-        super(ObjectSilhouette, self).__init__()
-        self.image = image
-        self.angle = angle
-        self.is_aligned = is_aligned
         
     ######################### Private interface ##########################
     def _get_aligned_version(self):
@@ -136,7 +129,7 @@ class ObjectSilhouette(HasTraits):
             except EllipseAlignmentError:
                 traceback.print_exc()
                 return None
-            self._aligned_version = ObjectSilhouette(rotated, angle, 
+            self._aligned_version = ObjectSilhouette(image=rotated, 
                 is_aligned=True)
         return self._aligned_version
     
@@ -183,7 +176,7 @@ class ImageSilhouette(HasTraits):
             return [self[nkey] for nkey in indices]
         else:
             image = self.label_image[self.object_slices[key]] == (key + 1)
-            return ObjectSilhouette(image)
+            return ObjectSilhouette(image=image)
     
     def __contains__(self):
         raise TypeError("Containment checking not supported: %s" % str(self))
@@ -194,15 +187,13 @@ class Plate(HasTraits):
     node = Instance(tables.Group)
     h5file = Instance(tables.File)
     images = List(Str)
-    def __init__(self, h5file, node):
+    def __init__(self, *args, **kwargs):
         """
         Construct a Plate object from a PyTables File reference
         and a node from that file representing the plate.
         """
-        super(Plate, self).__init__()
-        self.node = node
-        self.h5file = h5file
-        for groupnode in h5file.walkNodes(node, 'Group'):
+        super(Plate, self).__init__(*args, **kwargs)
+        for groupnode in self.h5file.walkNodes(self.node, 'Group'):
             if re.match(r'site\d', getattr(groupnode, '_v_name')):
                 self.images.append(getattr(groupnode, '_v_pathname'))
     
@@ -231,14 +222,13 @@ class DataSet(HasTraits):
     h5file = Instance(tables.File)
     plates = List(Str)
     
-    def __init__(self, h5file):
+    def __init__(self, *args, **kwargs):
         """
         Construct a DataSet object from the given PyTables file handle.
         """
-        super(DataSet, self).__init__()
-        for platenode in h5file.root:
+        super(DataSet, self).__init__(*args, **kwargs)
+        for platenode in self.h5file.root:
             self.plates.append(getattr(platenode, '_v_pathname'))
-        self.h5file = h5file
     
     def __len__(self):
         return len(self.plates)
@@ -249,7 +239,7 @@ class DataSet(HasTraits):
             return [self[nkey] for nkey in indices]
         else:
             node = self.h5file.getNode(self.plates[key])
-            return Plate(self.h5file, node)
+            return Plate(h5file=self.h5file, node=node)
     
     def __contains__(self):
         raise TypeError("Containment checking not supported: %s" % str(self))
@@ -324,10 +314,9 @@ class DataSetBrowser(HasTraits):
     smoothing = Range(0.0, 2.0, 0)
     
     
-    def __init__(self, dataset, **metadata):
+    def __init__(self, *args, **kwargs):
         """Construct a DataSetBrowser from the specified DataSet object."""
-        super(DataSetBrowser, self).__init__(**metadata)
-        self.dataset = dataset
+        super(DataSetBrowser, self).__init__(*args, **kwargs)
         self.current_plate = self.dataset[self.plate_index - 1]
         self.current_image = self.current_plate[self.image_index - 1]
         self.current_object = self.current_image[self.object_index - 1]
@@ -433,23 +422,23 @@ class DataSetBrowser(HasTraits):
             plot = Plot(plotdata)
             
             # Medial data
-            self._medial_data_renderer, = plot.plot(("medial_x", "medial_y"), 
-                             type="line", color="blue", line_style="dash", 
-                             name="Original medial axis data")
+            #self._medial_data_renderer, = plot.plot(("medial_x", "medial_y"), 
+            #                 type="line", color="blue", line_style="dash", 
+            #                 name="Original medial axis data")
             
             # Width data 
             self._width_data_renderer, = plot.plot(("width_x", "width_y"),
                 type="line", color="blue", name="Original width curve data")
             
             # Medial spline
-            self._medial_spline_renderer, = plot.plot(("medial_spline_x",
-                            "medial_spline_y"), type="line", color="green",
-                            line_style="dash", name="Medial axis spline")
+            #self._medial_spline_renderer, = plot.plot(("medial_spline_x",
+            #                "medial_spline_y"), type="line", color="green",
+            #                line_style="dash", name="Medial axis spline")
                         
             # Width spline
-            self._width_spline_renderer, = plot.plot(("width_spline_x",
-                            "width_spline_y"), type="line", color="green", 
-                            name="Width curve spline")
+            #self._width_spline_renderer, = plot.plot(("width_spline_x",
+            #                "width_spline_y"), type="line", color="green", 
+            #                name="Width curve spline")
             
             
             filterdata = ArrayPlotData(
@@ -500,20 +489,20 @@ class DataSetBrowser(HasTraits):
             #                 renderer.value.set_data(value)
             
             # # Update the real medial curve
-            self._medial_data_renderer.index.set_data(dependent_variable)
-            self._medial_data_renderer.value.set_data(medial_repr.medial_axis)
+            # self._medial_data_renderer.index.set_data(dependent_variable)
+            # self._medial_data_renderer.value.set_data(medial_repr.medial_axis)
             
             # Update the real width curve
             self._width_data_renderer.index.set_data(dependent_variable)
             self._width_data_renderer.value.set_data(medial_repr.width_curve)
 
             # # Update the fitted medial spline
-            self._medial_spline_renderer.index.set_data(spl_dep_var)
-            self._medial_spline_renderer.value.set_data(m_spline(spl_dep_var))
+            # self._medial_spline_renderer.index.set_data(spl_dep_var)
+            # self._medial_spline_renderer.value.set_data(m_spline(spl_dep_var))
             # 
             # # Update the fitted width spline
-            self._width_spline_renderer.index.set_data(spl_dep_var)
-            self._width_spline_renderer.value.set_data(w_spline(spl_dep_var))
+            # self._width_spline_renderer.index.set_data(spl_dep_var)
+            # self._width_spline_renderer.value.set_data(w_spline(spl_dep_var))
             
             #self._second_deriv_renderer.index.set_data(dependent_variable[1:-1])
             #self._second_deriv_renderer.value.set_data(curv)
@@ -532,12 +521,13 @@ class DataSetBrowser(HasTraits):
     def _smoothing_changed(self):
         """Hook to update the plot when we change the smoothing parameter."""
         self._update_spline_plot()
+        
 
 def main():
     """Initiates the Traits dialog."""
     h5file = tables.openFile(sys.argv[1])
-    dataset = DataSet(h5file)
-    browser = DataSetBrowser(dataset)
+    dataset = DataSet(h5file=h5file)
+    browser = DataSetBrowser(dataset=dataset)
     browser.configure_traits()#kind="livemodal")
     del browser
     del dataset
