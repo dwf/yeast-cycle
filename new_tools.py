@@ -137,7 +137,7 @@ class ImageSilhouette(HasTraits):
     label_image = Array()
     object_slices = List(Tuple(slice, slice), ())
     
-    def __init__(self, *args, **args):
+    def __init__(self, *args, **kwargs):
         """
         Construct an ImageSilhouette object from a PyTables node containing
         a binary mask array.
