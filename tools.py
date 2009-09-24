@@ -2,7 +2,7 @@
 import os, os.path, re, sys, csv
 
 # Python Imaging Library
-import PIL.Image
+# import PIL.Image
 
 # SciPy imports
 import numpy as np
@@ -29,15 +29,15 @@ class ObjectTooSmallError(ValueError):
     pass
 
 
-def imread_binary(*kw, **args):
-    """
-    Reads in a binary PNG image with PIL.
-    
-    For keywords and arguments, see the documentation for PIL.Image.open.
-    
-    """
-    im = PIL.Image.open(*kw, **args)
-    return matplotlib.image.pil_to_array(im)[:,:,0] == 255
+# def imread_binary(*kw, **args):
+#     """
+#     Reads in a binary PNG image with PIL.
+#     
+#     For keywords and arguments, see the documentation for PIL.Image.open.
+#     
+#     """
+#     im = PIL.Image.open(*kw, **args)
+#     return matplotlib.image.pil_to_array(im)[:,:,0] == 255
 
 
 def medial_axis_representation(obj):
@@ -207,9 +207,9 @@ def coef2knots(x):
     return x - 4
 
 
-def unmix(data, meandata=None, stddata=None, k=4):
+def unmix(data, meandata=None, stddata=None, k=3, extra=1):
     D = len(data)
-    perspline = (D - 1)/2
+    perspline = (D - extra)/2
     t = internal_knots(coef2knots(perspline))
     t = np.concatenate((np.zeros(4),t,np.ones(4)))
     if stddata is not None:
