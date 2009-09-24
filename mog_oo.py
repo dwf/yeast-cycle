@@ -377,7 +377,7 @@ class GaussianMixture(object):
             for clust in xrange(self._ncomponent()):    
                 pyplot.subplot(rows, cols, clust+1)
                 pyplot.matshow(self._precision[:, :, clust], fignum=False)
-                pyplot.title('Precision for %s component %d' % (name, clust),
+                pyplot.title('Precision matrix for %s component %d' % (name, clust + 1),
                     fontsize='small')
                 pyplot.colorbar()
             
@@ -385,7 +385,8 @@ class GaussianMixture(object):
             pyplot.bar(bottom=np.zeros(self._ncomponent()), left=np.arange(1, 
                 self._ncomponent()+1)-0.5, height=np.exp(self._logalpha),
                     width=1)
-            
+            pyplot.xticks(np.arange(1, self._ncomponent() + 1))
+            pyplot.title('Mixing proportions')
             pyplot.show()
             pyplot.ion()
     
