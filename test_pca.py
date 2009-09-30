@@ -20,7 +20,7 @@ def check_rows_match_except_sign(m1, m2):
         assert np.allclose(row1, row2) or np.allclose(row1, -row2)
 
 def test_snapshot_vs_direct_pc_rowvar_false():
-    """Tests that EM and direct agree."""
+    """Tests that snapshot and direct agree."""
     np.random.seed(1)
     data = np.random.normal(size=(10, 50))
     pc1 = PrincipalComponents(data)
