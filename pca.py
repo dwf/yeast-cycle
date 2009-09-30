@@ -81,7 +81,7 @@ class PrincipalComponents(object):
         normalizers = np.apply_along_axis(linalg.norm, 0, self._eigvec)
         self._eigvec /= normalizers[np.newaxis, :]
     
-    def _em_one_pass(self, centered=None, numcmpt=1, thresh=1e-14, out=None):
+    def _em_one_pass(self, centered=None, numcmpt=1, thresh=1e-16, out=None):
         """
         With numcmpt = 1, computes the first principal component
         of the data. Otherwise computes an unnormalized, non-orthogonal
