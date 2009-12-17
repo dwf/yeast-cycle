@@ -19,7 +19,7 @@ try:
 except ImportError:
     PLOTTING_AVAILABLE = False
 
-def _logsumexp(logx, axis=-1):
+def logsumexp(logx, axis=-1):
     """
     Compute log(sum(exp(x))) in a numerically stable way.  
     Use second argument to specify along which dimensions the logsumexp
@@ -39,7 +39,6 @@ def _logsumexp(logx, axis=-1):
         xmax = logx.max(lastdim)
         return xmax + np.log(np.sum(np.exp( logx-xmax[..., np.newaxis]),
             lastdim))
-
 
 def _print_now(s):
     print s
@@ -62,29 +61,26 @@ def plot_progress(lhistory):
 
 class GaussianMixture(object):
     """Basic Gaussian mixture model."""
-    def __init__(self, ncomponent, data, norm=False, pcounts=0, update=None):
+    def __init__(self, ncomponent, ndim, norm=None, pcounts=0, update=None):
         """
         Constructor. 
         Add real documentation.
         """
-        # We use these a lot below, so cache them for readability
-        ntrain, ndim = data.shape
         
-        if norm == True:
-            self._normmean = data.mean(axis=0)
-            self._normstd = data.std(axis=0)
-            self._data = (data.copy() - self._normmean) / self._normstd
+        self._ndim = ndim
+        
+        if norm is not None:
+            self._normmean = norm.mean(axis=0)
+            self._normstd = norm.std(axis=0)
+            
         else:
-            self._data = data
             self._normmean = None
             self._normstd = None
-        
-        self._pseudocounts = pcounts
         
         # Handle the 'update' array, which tells us whether or not we 
         # update a given component's parameters by M-step estimation.
         if update is None:
-            self._update = np.ones((ncomponent, ), dtype=bool)
+            self._update = np.ones((ncomponent,), dtype=bool)
         elif len(update) != ncomponent:
             raise ValueError("len(update) must be equal to ncomponent")
         else:
@@ -94,7 +90,8 @@ class GaussianMixture(object):
         means = np.empty((ncomponent, ndim))
         precision = np.empty((ndim, ndim, ncomponent))
         memberships = np.empty((ncomponent))
-        resp = np.empty((ncomponent, ntrain))
+        resp = None
+        #resp = np.empty((ncomponent, ntrain))
         
         # Initialize them
         self._logalpha = memberships
@@ -103,7 +100,7 @@ class GaussianMixture(object):
         self._resp = resp
         
         # Store the training data mean for pseudocount shrinkage
-        self._trainmean = np.mean(self._data,axis=0)
+        # TODO: self._trainmean = np.mean(axis=0)
         
         # For saving last iteration parameters for debugging
         self._oldmeans, self._oldprecision, self._oldlogalpha = \
@@ -111,17 +108,12 @@ class GaussianMixture(object):
         self._oldresponsibilities = None
         
         # Do a stochastic hard-assignment E-step
-        self._random_e_step()    
-    
-    
-    def _ntrain(self):
-        """Return the number of examples in the training set."""
-        return self._data.shape[0]
+        # TODO: self._random_e_step()    
     
     
     def _ndim(self):
         """Return the number of dimensions in the training set."""
-        return self._data.shape[1]
+        return self._ndim
     
     
     def _ncomponent(self):
@@ -131,8 +123,8 @@ class GaussianMixture(object):
     
     def _numparams(self):
         """Return the number of free parameters in the model."""
-        covparams = self._ndim() * (self._ndim() + 1) / 2.
-        meanparams = self._ndim()
+        covparams = self._ndim * (self._ndim + 1) / 2.
+        meanparams = self._ndim
         return self._ncomponent() * (covparams + meanparams) + \
             (self._ncomponent() - 1)
     
@@ -145,39 +137,36 @@ class GaussianMixture(object):
         return np.all(self._update)
     
     
-    def aic(self):
+    def aic(self, data):
         """Akaike information criterion for the current model fit."""
-        return 2 * self._numparams() - 2 * self.loglikelihood()
+        return 2 * self._numparams() - 2 * self.loglikelihood(data)
     
     
-    def bic(self):
+    def bic(self, data):
         """Bayesian information criterion for the current model fit."""
         params = self._numparams()
-        ntrain = self._ntrain()
-        return -2 * self.loglikelihood() +  params * np.log(ntrain)
+        return -2 * self.loglikelihood(data) +  params * np.log(data.shape[0])
     
     
-    def _random_e_step(self):
+    def _random_e_step(self, data):
         """
         Randomly do a hard assignment to a particular component of
         the mixture.
         """
         fakepostidx = random.random_integers(self._ncomponent(),
-            size=self._ntrain()) - 1
-        fakeposterior = np.zeros((self._ncomponent(), self._ntrain()))
-        fakeposterior[fakepostidx, xrange(self._ntrain())] = 1
+            size=data.shape[0]) - 1
+        fakeposterior = np.zeros((self._ncomponent(), data.shape[0]))
+        fakeposterior[fakepostidx, xrange(data.shape[0])] = 1
         self._resp = fakeposterior
     
     
-    def log_probs(self, clust, data=None):
+    def log_probs(self, clust, data):
         """
         Log probability of each training data point under a particular
         mixture component.
         """
-        if data == None:
-            data = self._data
         centered = data - self._means[clust, :][np.newaxis, :]
-        ndim = self._ndim()
+        ndim = self._ndim
         logphat = -0.5 * (centered * np.dot(centered,
             self._precision[:, :, clust])).sum(axis=1)
         lognormalizer = ndim/2.0 * np.log(2*np.pi) - 0.5 * \
@@ -185,71 +174,67 @@ class GaussianMixture(object):
         return logphat - lognormalizer
     
     
-    def _logjoint(self, data=None):
+    def _logjoint(self, data):
         """
         Function that computes the log joint probability of each training
         example.
         """
         logalpha = self._logalpha
-        if data != None:
-            numpts = data.shape[0]
-        else:
-            numpts = self._ntrain()
+        numpts = data.shape[0]
         condprobs = np.nan * np.zeros((self._ncomponent(), numpts))
         for clust in xrange(self._ncomponent()):
             condprobs[clust, :] = self.log_probs(clust, data)
         condprobs += logalpha[:, np.newaxis]
-        lik = _logsumexp(condprobs, axis=0)
+        lik = np.logaddexp.reduce(condprobs, axis=0) # Reduces along first dim
         return condprobs, lik
     
     
-    def e_step(self):
+    def e_step(self, data):
         """
         Compute expected value of hidden variables under the posterior 
         as specified by the current model parameters.
         """
-        logjoint, lik = self._logjoint()
+        logjoint, lik = self._logjoint(data)
         logresp = logjoint - lik
         logresp[logresp < MIN_LOGPROB] = MIN_LOGPROB
         self._resp = np.exp(logresp)
     
     
-    def loglikelihood(self):
+    def loglikelihood(self, data):
         """
         Log likelihood of the training data.
         """
-        lik = self._logjoint()[1]
+        lik = self._logjoint(data)[1]
         return lik.sum()
     
     
-    def m_step(self):
+    def m_step(self, data, pcounts=0):
         """
         Maximize the model parameters with respect to the expected
         complete log likelihood.
         """        
         
-        self._m_step_update_means()
+        self._m_step_update_means(data, pcounts)
         
-        self._m_step_update_precisions()
+        self._m_step_update_precisions(data, pcounts)
         
         self._m_step_update_logalpha()
     
     
-    def _m_step_update_means(self):
+    def _m_step_update_means(self, data, pcounts=0):
         """Do the M-step update for the means of each component."""
+        #pdb.set_trace()
         resp = self._resp
-        data = self._data
         sumresp = resp.sum(axis=1)
         if np.any(sumresp == 0):
             _print_now("WARNING: A cluster got assigned 0 responsibility.")
             sumresp[sumresp == 0] = 1.
-        data = self._data
         num = np.dot(resp, data)
         den = sumresp[:, np.newaxis]
         
-        if self._pseudocounts > 0:
-            num += self._pseudocounts * self._trainmean[np.newaxis, :]
-            den += self._pseudocounts
+        if pcounts > 0:
+            num += pcounts * self._trainmean[np.newaxis, :]
+            den += pcounts
         
         # This should avoid copying while doing the division
         means = num
@@ -261,12 +246,12 @@ class GaussianMixture(object):
             self._means[self._update, :] = means[self._update, :]
     
     
-    def _m_step_update_precisions(self):
+    def _m_step_update_precisions(self, data, pcounts=0):
         """Do the M-step update for the precisions (inverse covariances)."""
         resp = self._resp
         sumresp = resp.sum(axis=1)
         means = self._means
-        meansub = self._data[:, :, np.newaxis] - means.T[np.newaxis, :, :]
+        meansub = data[:, :, np.newaxis] - means.T[np.newaxis, :, :]
         meansub2 = np.array(meansub)
         meansub *= self._resp.T[:, np.newaxis, :]
         for clust in xrange(self._ncomponent()):
@@ -275,9 +260,9 @@ class GaussianMixture(object):
                 xmmu2 = meansub2[:, :, clust]
                 #  TODO: Optimize pseudocount addition
                 newsigma = (np.dot(xmmu.T, xmmu2) + \
-                    self._pseudocounts * \
-                    np.eye(self._ndim())) / \
-                    (sumresp[clust] + self._pseudocounts)
+                    pcounts * \
+                    np.eye(self._ndim)) / \
+                    (sumresp[clust] + pcounts)
                 try:
                     newprecision = linalg.inv(newsigma)
                     if np.isnan(np.log(linalg.det(newprecision))) or \
@@ -306,12 +291,12 @@ class GaussianMixture(object):
         self._logalpha = np.log(alpha) - np.log(np.sum(alpha))
     
     
-    def EM(self, thresh=1e-6, plotiter=50, hardlimit=2000):
+    def EM(self, data, thresh=1e-6, pcounts=0, plotiter=50, hardlimit=2000):
         """Do expectation-maximization to fit the model parameters."""
-        self.m_step()
+        self.m_step(data, pcounts)
         lhistory = []
         lprev = -np.inf
-        lcurr = self.loglikelihood()
+        lcurr = self.loglikelihood(data)
         count = 0
         while np.abs(lprev - lcurr) > thresh and count < hardlimit:
             if plotiter != None and count > 0 and count % plotiter == 0:
@@ -323,13 +308,13 @@ class GaussianMixture(object):
             self._oldprecision = self._precision.copy()
             
             # Generate posterior over memberships
-            self.e_step()
+            self.e_step(data)
             
             # Update mixture parameters
-            self.m_step()
+            self.m_step(data, pcounts)
             
             lprev = lcurr
-            lcurr = self.loglikelihood()
+            lcurr = self.loglikelihood(data)
             
             if lcurr < lprev:
                 _print_now("Likelihood went down!")
@@ -348,13 +333,17 @@ class GaussianMixture(object):
     
     def save(self, filename):
         """Save to a .npz file."""
-        np.savez(filename, ncomponent=np.array(self._ncomponent()), 
-            ntrain=np.array(self._ntrain()),
-            ndim=np.array(self._ndim()), precision=self._precision, 
-            means=self._means, logalpha=self._logalpha, 
-            #diagonal=np.array(self._diagonal),
-            aic=np.array(self.aic()), bic=np.array(self.bic()),
-            update=self._update)
+            things_to_save = {
+                'precision': self._precision,
+                'means': self._means,
+                'logalpha': self._logalpha, 
+                'update': self._update
+            }
+            if self._trainmean is not None:
+                things_to_save['trainmean'] = self._trainmean
+            if self._trainstd is not None:
+                things_to_save['trainstd'] = self._trainstd
+            
     
     
     def display(self, precision=None, logalpha=None, name=None, figurenum=1):
@@ -419,12 +408,12 @@ class DiagonalGaussianMixture(GaussianMixture):
     A Gaussian mixture model that has one extra component with parameters
     equal to the mean and covariance of the data and is fixed.
     """
-    def _m_step_update_precisions(self):
+    def _m_step_update_precisions(self, pcounts=0):
         """Do the M-step update for the precisions (inverse covariances)."""
         resp = self._resp
         sumresp = resp.sum(axis=1)
         means = self._means
-        meansub = self._data[:, :, np.newaxis] - means.T[np.newaxis, :, :]
+        meansub = data[:, :, np.newaxis] - means.T[np.newaxis, :, :]
         meansub2 = np.array(meansub)
         meansub *= self._resp.T[:, np.newaxis, :]
         for clust in xrange(self._ncomponent()):
@@ -432,8 +421,8 @@ class DiagonalGaussianMixture(GaussianMixture):
                 xmmu = meansub[:, :, clust]
                 xmmu2 = meansub2[:, :, clust]
                 newsigma = ((xmmu * xmmu2).sum(axis=0) + \
-                    self._pseudocounts) / (sumresp[clust] + \
-                    self._pseudocounts)
+                    pcounts) / (sumresp[clust] + \
+                    pcounts)
                 newprec = newsigma # No copy
                 newprec **= -1. # Invert
                 if np.any(np.isnan(newprec)) or np.any(np.isinf(newprec)): 
@@ -445,8 +434,8 @@ class DiagonalGaussianMixture(GaussianMixture):
     
     def _numparams(self):
         """Return the number of free parameters in the model."""
-        covparams = self._ndim()
-        meanparams = self._ndim()
+        covparams = self._ndim
+        meanparams = self._ndim
         return self._ncomponent() * (covparams + meanparams) + \
             (self._ncomponent() - 1)
     
