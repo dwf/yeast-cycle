@@ -291,7 +291,7 @@ class GaussianMixture(object):
     def EM(self, data, thresh=1e-6, pcounts=0, plotiter=50, hardlimit=2000):
         """Do expectation-maximization to fit the model parameters."""
         
-        if len(history) == 0:
+        if len(self.history) == 0:
             lprev = 0
             lcurr = -np.inf
         
