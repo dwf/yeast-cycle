@@ -259,9 +259,9 @@ class GaussianMixture(object):
         resp = self._resp
         sumresp = resp.sum(axis=1)
         means = self._means
-        meansub = data[..., np.newaxis] - means.T[np.newaxis, ...]
+        meansub = data[np.newaxis, ...] - means[:, np.newaxis, ...]
         meansub2 = np.array(meansub)
-        meansub *= self._resp.T[:, np.newaxis, :]
+        meansub *= self._resp[..., np.newaxis]
         for clust in xrange(self._ncomponent()):
             if self._update[clust]:
                 xmmu = meansub[clust, ...]
