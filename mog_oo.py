@@ -63,10 +63,10 @@ class GaussianMixture(object):
     """Basic Gaussian mixture model."""
     def __init__(self, ncomponent, ndim, norm=None, pcounts=0, update=None):
         """
-        Constructor. 
-        Add real documentation.
+        Constructor. Add real documentation.
         """
         self._ndim = ndim
+        self.history = []
         
         if norm is not None:
             self._normmean = norm.mean(axis=0)
@@ -87,7 +87,7 @@ class GaussianMixture(object):
         
         # Make space for our model parameters
         means = np.empty((ncomponent, ndim))
-        covariances = np.empty((ndim, ndim, ncomponent))
+        covariances = np.empty((ncomponent, ndim, ndim))
         memberships = np.empty((ncomponent))
         resp = None
         #resp = np.empty((ncomponent, ntrain))
@@ -106,7 +106,8 @@ class GaussianMixture(object):
             self._oldmeans, self._oldcov, self._oldlogalpha = \
                 None, None, None
             self._oldresp = None
-        
+    
+
     def _ndim(self):
         """Return the number of dimensions in the training set."""
         return self._ndim
@@ -161,18 +162,20 @@ class GaussianMixture(object):
         Log probability of each training data point under a particular
         mixture component.
         """
-        centered = data - self._means[clust, :][np.newaxis, :]
+        centered = data - self._means[clust, ...][np.newaxis, ...]
         ndim = self._ndim
         #logphat = -0.5 * (centered * np.dot(centered,
         #    self._precision[:, :, clust])).sum(axis=1)
-        logphat = linalg.solve(self._covariances[:, :, clust], centered.T)
+        logphat = linalg.solve(self._covariances[clust, ...], centered.T)
         logphat *= centered.T
         logphat *= -0.5
         logphat = logphat.sum(axis=0)
+
         #lognormalizer = ndim/2.0 * np.log(2*np.pi) - 0.5 * \
         #    np.log(linalg.det(self._precision[:, :, clust]))
         lognormalizer = ndim / 2.0 * np.log(2 * np.pi) + 0.5 * \
-                np.log(linalg.det(self._covariances[:, :, clust]))
+                np.log(linalg.det(self._covariances[clust, ...]))
+        
         return logphat - lognormalizer
     
     
@@ -246,42 +249,31 @@ class GaussianMixture(object):
         means /= den
         
         if self._updating_all():
-            self._means[:, :] = means
+            self._means[...] = means
         else:
-            self._means[self._update, :] = means[self._update, :]
+            self._means[self._update, ...] = means[self._update, ...]
     
+
     def _m_step_update_covariances(self, data, pcounts=0):
         """Do the M-step update for the covariances."""
         resp = self._resp
         sumresp = resp.sum(axis=1)
         means = self._means
-        meansub = data[:, :, np.newaxis] - means.T[np.newaxis, :, :]
+        meansub = data[..., np.newaxis] - means.T[np.newaxis, ...]
         meansub2 = np.array(meansub)
         meansub *= self._resp.T[:, np.newaxis, :]
         for clust in xrange(self._ncomponent()):
             if self._update[clust]:
-                xmmu = meansub[:, :, clust]
-                xmmu2 = meansub2[:, :, clust]
+                xmmu = meansub[clust, ...]
+                xmmu2 = meansub2[clust, ...]
                 #  TODO: Optimize pseudocount addition
                 newsigma = (np.dot(xmmu.T, xmmu2) + \
                     pcounts * \
                     np.eye(self._ndim)) / \
                     (sumresp[clust] + pcounts)
                 
-                self._covariances[:, :, clust] = newsigma
-                #try:
-                #   newprecision = linalg.inv(newsigma)
-                #   if np.isnan(np.log(linalg.det(newprecision))) or \
-                #   np.isinf(np.log(linalg.det(newprecision))):
-                #       _print_now("NEW PRECISION DETERMINANT:" + \
-                #           str(linalg.det(newprecision)))
-                #   else:
-                #        self._precision[:, :, clust] = newprecision
-                #except linalg.LinAlgError:
-                #    _print_now("Failed to invert %d, cond=%f" % (clust,
-                #        linalg.cond(newsigma)))
-                #pyplot.figure(2)
-                #pyplot.matshow(newsigma)
+                self._covariances[clust, ...] = newsigma
+    
 
     def _m_step_update_logalpha(self):
         """Do the M-step update for the log prior."""
@@ -295,17 +287,20 @@ class GaussianMixture(object):
         alpha = np.exp(self._logalpha)
         self._logalpha = np.log(alpha) - np.log(np.sum(alpha)) 
     
+
     def EM(self, data, thresh=1e-6, pcounts=0, plotiter=50, hardlimit=2000):
         """Do expectation-maximization to fit the model parameters."""
-        lhistory = []
-        lprev = 0
-        lcurr = -np.inf
-        count = 0
+        
+        if len(history) == 0:
+            lprev = 0
+            lcurr = -np.inf
+        
+        count = len(self.history)
         
         while np.abs(lprev - lcurr) > thresh and count < hardlimit:
             if plotiter != None and count > 0 and count % plotiter == 0:
-                plot_progress(lhistory)
-
+                plot_progress(self.history)
+            
             if DEBUG:
                 self._oldresp = self._resp[:]
                 self._oldlogalpha = self._logalpha[:]
@@ -314,29 +309,27 @@ class GaussianMixture(object):
             
             # Update mixture parameters
             self.m_step(data, pcounts)
-
+            
             # Save previous likelihood
             lprev = lcurr
-
+            
             # Generate posterior over memberships, and current
             # (expected) complete log likelihood
             lcurr = self.e_step(data)
-
+            
             if lcurr < lprev:
                 _print_now("Likelihood went down!")
-
             
-            lhistory.append(lcurr)
-
+            self.history.append(lcurr)
+            
             count += 1
             _print_now("%5d: L = %10.5f" % (count, lcurr))
-
+            
             # Plot progress of the optimization
             if plotiter != None and count > 0 and count % plotiter == 0:
-                plot_progress(lhistory)
-            
-        return lhistory
+                plot_progress(self.history)
     
+
     def save(self, filename):
         """Save to a .npz file."""
         things_to_save = {
@@ -349,7 +342,8 @@ class GaussianMixture(object):
             things_to_save['trainmean'] = self._trainmean
         if self._trainstd is not None:
             things_to_save['trainstd'] = self._trainstd
-            
+    
+
     def display(self, precision=None, logalpha=None, name=None, figurenum=1):
         """Display covariances and alphas with matplotlib."""
         if PLOTTING_AVAILABLE:
@@ -369,7 +363,7 @@ class GaussianMixture(object):
             
             for clust in xrange(self._ncomponent()):    
                 pyplot.subplot(rows, cols, clust+1)
-                pyplot.matshow(self._covariances[:, :, clust], fignum=False)
+                pyplot.matshow(self._covariances[clust, ...], fignum=False)
                 pyplot.title('Precision matrix for %s component %d' % (name, clust + 1),
                     fontsize='small')
                 pyplot.colorbar()
