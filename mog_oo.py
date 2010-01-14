@@ -135,12 +135,20 @@ class GaussianMixture(object):
     
     
     def aic(self, data):
-        """Akaike information criterion for the current model fit."""
+        """
+        Akaike information criterion for the current model fit.
+        
+        NOTE: Does not account for pseudocounts.
+        """
         return 2 * self._numparams() - 2 * self.loglikelihood(data)
     
     
     def bic(self, data):
-        """Bayesian information criterion for the current model fit."""
+        """
+        Bayesian information criterion for the current model fit.
+        
+        NOTE: Does not account for pseudocounts.
+        """
         params = self._numparams()
         return -2 * self.loglikelihood(data) +  params * np.log(data.shape[0])
     
@@ -401,39 +409,39 @@ class GaussianMixtureWithGarbageModel(GaussianMixture):
     
 
 
-class DiagonalGaussianMixture(GaussianMixture):
-    """
-    A Gaussian mixture model that has one extra component with parameters
-    equal to the mean and covariance of the data and is fixed.
-    """
-    def _m_step_update_precisions(self, pcounts=0):
-        """Do the M-step update for the precisions (inverse covariances)."""
-        resp = self._resp
-        sumresp = resp.sum(axis=1)
-        means = self._means
-        meansub = data[:, :, np.newaxis] - means.T[np.newaxis, :, :]
-        meansub2 = np.array(meansub)
-        meansub *= self._resp.T[:, np.newaxis, :]
-        for clust in xrange(self._ncomponent()):
-            if self._update[clust]:
-                xmmu = meansub[:, :, clust]
-                xmmu2 = meansub2[:, :, clust]
-                newsigma = ((xmmu * xmmu2).sum(axis=0) + \
-                    pcounts) / (sumresp[clust] + \
-                    pcounts)
-                newprec = newsigma # No copy
-                newprec **= -1. # Invert
-                if np.any(np.isnan(newprec)) or np.any(np.isinf(newprec)): 
-                    _print_now("WARNING: Zero div updating precision %d" \
-                    % clust)
-                else:
-                    self._precision[:, :, clust] = np.diag(newprec)
-    
-    
-    def _numparams(self):
-        """Return the number of free parameters in the model."""
-        covparams = self._ndim
-        meanparams = self._ndim
-        return self._ncomponent() * (covparams + meanparams) + \
-            (self._ncomponent() - 1)
-    
+# class DiagonalGaussianMixture(GaussianMixture):
+#     """
+#     A Gaussian mixture model that has one extra component with parameters
+#     equal to the mean and covariance of the data and is fixed.
+#     """
+#     def _m_step_update_precisions(self, pcounts=0):
+#         """Do the M-step update for the precisions (inverse covariances)."""
+#         resp = self._resp
+#         sumresp = resp.sum(axis=1)
+#         means = self._means
+#         meansub = data[:, :, np.newaxis] - means.T[np.newaxis, :, :]
+#         meansub2 = np.array(meansub)
+#         meansub *= self._resp.T[:, np.newaxis, :]
+#         for clust in xrange(self._ncomponent()):
+#             if self._update[clust]:
+#                 xmmu = meansub[:, :, clust]
+#                 xmmu2 = meansub2[:, :, clust]
+#                 newsigma = ((xmmu * xmmu2).sum(axis=0) + \
+#                     pcounts) / (sumresp[clust] + \
+#                     pcounts)
+#                 newprec = newsigma # No copy
+#                 newprec **= -1. # Invert
+#                 if np.any(np.isnan(newprec)) or np.any(np.isinf(newprec)): 
+#                     _print_now("WARNING: Zero div updating precision %d" \
+#                     % clust)
+#                 else:
+#                     self._precision[:, :, clust] = np.diag(newprec)
+#     
+#     
+#     def _numparams(self):
+#         """Return the number of free parameters in the model."""
+#         covparams = self._ndim
+#         meanparams = self._ndim
+#         return self._ncomponent() * (covparams + meanparams) + \
+#             (self._ncomponent() - 1)
+#     
