@@ -61,6 +61,26 @@ def plot_progress(lhistory):
 
 class GaussianMixture(object):
     """Basic Gaussian mixture model."""
+    
+    
+    def save(self, file):
+        """Save to a .npz file."""
+        things_to_save = {
+            'covariances': self._covariances,
+            'means': self._means,
+            'logalpha': self._logalpha, 
+            'update': self._update,
+            'history': np.asarray(self.history),
+            'ndim': np.asarray(self._ndim),
+            'normmean': np.asarray(self._normmean),
+            'normstd': np.asarray(self._normstd)
+        }
+        np.savez(file, **things_to_save)
+    
+    def from_saved(cls, *args, **kwargs):
+        np.load(*args, **kwargs)
+        object = cls.__new__(GaussianMixture)
+    
     def __init__(self, ncomponent, ndim, norm=None, pcounts=0, update=None):
         """
         Constructor. Add real documentation.
@@ -97,9 +117,6 @@ class GaussianMixture(object):
         self._covariances = covariances
         self._means = means
         self._resp = resp
-        
-        # Store the training data mean for pseudocount shrinkage
-        # TODO: self._trainmean = np.mean(axis=0)
         
         # For saving last iteration parameters for debugging
         if DEBUG:
@@ -222,7 +239,7 @@ class GaussianMixture(object):
         return lik.sum()
     
     
-    def m_step(self, data, pcounts=0):
+    def m_step(self, data, pcounts=0, pcmean=None):
         """
         Maximize the model parameters with respect to the expected
         complete log likelihood.
@@ -230,14 +247,14 @@ class GaussianMixture(object):
         if self._resp is None:
             self._random_e_step(data)
 
-        self._m_step_update_means(data, pcounts)
+        self._m_step_update_means(data, pcounts, pcmean)
         
         self._m_step_update_covariances(data, pcounts)
         
         self._m_step_update_logalpha()
     
     
-    def _m_step_update_means(self, data, pcounts=0):
+    def _m_step_update_means(self, data, pcounts=0, pcmean=None):
         """Do the M-step update for the means of each component."""
         #pdb.set_trace()
         resp = self._resp
@@ -249,7 +266,7 @@ class GaussianMixture(object):
         den = sumresp[:, np.newaxis]
         
         if pcounts > 0:
-            num += pcounts * self._trainmean[np.newaxis, :]
+            num += pcounts * pcmean[np.newaxis, :]
             den += pcounts
         
         # This should avoid copying while doing the division
@@ -305,6 +322,11 @@ class GaussianMixture(object):
         
         count = len(self.history)
         
+        if pcounts > 0:
+            pcmean = data.mean(axis=0)
+        else:
+            pcmean = None
+        
         while np.abs(lprev - lcurr) > thresh and count < hardlimit:
             if plotiter != None and count > 0 and count % plotiter == 0:
                 plot_progress(self.history)
@@ -316,7 +338,7 @@ class GaussianMixture(object):
                 self._oldcov = self._covariances.copy()
             
             # Update mixture parameters
-            self.m_step(data, pcounts)
+            self.m_step(data, pcounts, pcmean)
             
             # Save previous likelihood
             lprev = lcurr
@@ -337,21 +359,7 @@ class GaussianMixture(object):
             if plotiter != None and count > 0 and count % plotiter == 0:
                 plot_progress(self.history)
     
-
-    def save(self, filename):
-        """Save to a .npz file."""
-        things_to_save = {
-            'precision': self._precision,
-            'means': self._means,
-            'logalpha': self._logalpha, 
-            'update': self._update
-        }
-        if self._trainmean is not None:
-            things_to_save['trainmean'] = self._trainmean
-        if self._trainstd is not None:
-            things_to_save['trainstd'] = self._trainstd
-    
-
+        
     def display(self, precision=None, logalpha=None, name=None, figurenum=1):
         """Display covariances and alphas with matplotlib."""
         if PLOTTING_AVAILABLE:
