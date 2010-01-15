@@ -80,6 +80,7 @@ class GaussianMixture(object):
     
     @classmethod
     def from_saved(cls, *args, **kwargs):
+        """Load a serialized .npz GaussianMixture class."""
         archive = np.load(*args, **kwargs)
         obj = cls.__new__(cls)
         for arrname in archive.files:
@@ -236,10 +237,14 @@ class GaussianMixture(object):
         Compute expected value of hidden variables under the posterior 
         as specified by the current model parameters.
         """
+        
+        if self._resp.shape[1] < data.shape[0]:
+            self._resp = np.empty((self._ncomponent, data.shape[0]))
+        
         logjoint, lik = self._logjoint(data)
         logresp = logjoint - lik
         logresp[logresp < MIN_LOGPROB] = MIN_LOGPROB
-        self._resp = np.exp(logresp)
+        np.exp(logresp, self._resp[:, :data.shape[0]])
         return lik.sum()
     
     
@@ -263,13 +268,13 @@ class GaussianMixture(object):
         
         self._m_step_update_covariances(data, pcounts)
         
-        self._m_step_update_logalpha()
+        self._m_step_update_logalpha(data)
     
     
     def _m_step_update_means(self, data, pcounts=0, pcmean=None):
         """Do the M-step update for the means of each component."""
         #pdb.set_trace()
-        resp = self._resp
+        resp = self._resp[:, :data.shape[0]]
         sumresp = resp.sum(axis=1)
         if np.any(sumresp == 0):
             _print_now("WARNING: A cluster got assigned 0 responsibility.")
@@ -293,12 +298,12 @@ class GaussianMixture(object):
 
     def _m_step_update_covariances(self, data, pcounts=0):
         """Do the M-step update for the covariances."""
-        resp = self._resp
+        resp = self._resp[:, :data.shape[0]]
         sumresp = resp.sum(axis=1)
         means = self._means
         meansub = data[np.newaxis, ...] - means[:, np.newaxis, ...]
         meansub2 = np.array(meansub)
-        meansub *= self._resp[..., np.newaxis]
+        meansub *= resp[..., np.newaxis]
         for clust in xrange(self._ncomponent()):
             if self._update[clust]:
                 xmmu = meansub[clust, ...]
@@ -312,9 +317,9 @@ class GaussianMixture(object):
                 self._covariances[clust, ...] = newsigma
     
 
-    def _m_step_update_logalpha(self):
+    def _m_step_update_logalpha(self, data):
         """Do the M-step update for the log prior."""
-        sumresp = self._resp.sum(axis=1)
+        sumresp = self._resp[:, :data.shape[0]].sum(axis=1)
         self._logalpha = np.log(sumresp) - np.log(sumresp.sum())
         
         # Any infinite quantities
@@ -374,6 +379,44 @@ class GaussianMixture(object):
             if plotiter != None and count > 0 and count % plotiter == 0:
                 plot_progress(self._history)
     
+    def minibatch_EM(self, data, batchsize, thresh=1e-6, \
+                     pcounts=0, plotiter=50, hardlimit=20000):
+        """"""
+        if len(self._history) == 0:
+            lprev = 0
+            lcurr = -np.inf
+        else:
+            lprev = -np.inf
+            lcurr = self._history[-1]
+        
+        count = len(self._history)
+        
+        if pcounts > 0:
+            pcmean = data.mean(axis=0)
+        else:
+            pcmean = None
+        
+        while np.abs(lprev - lcurr) > thresh and count < hardlimit:
+            lprev = lcurr
+            lcurr = 0
+            nbatches = np.ceil(data.shape[0] / batchsize)
+            for batch in xrange(nbatches):
+                
+                _print_now("Batch %d/%d..." % (batch + 1, nbatches))
+                
+                databatch = data[batch * batchsize:(batch + 1) * batchsize]
+                
+                self.m_step(databatch, pcounts, pcmean)
+                
+                lcurr += self.e_step(databatch)
+
+            self._history.append(lcurr)
+            
+            count += 1
+            _print_now("%5d: L = %10.5f" % (count, lcurr))
+            
+            if plotiter != None and count > 0 and count % plotiter == 0:
+                plot_progress(self._history)
         
     def display(self, precision=None, logalpha=None, name=None, figurenum=1):
         """Display covariances and alphas with matplotlib."""
