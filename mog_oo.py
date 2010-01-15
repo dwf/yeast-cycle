@@ -70,23 +70,35 @@ class GaussianMixture(object):
             'means': self._means,
             'logalpha': self._logalpha, 
             'update': self._update,
-            'history': np.asarray(self.history),
+            'history': np.asarray(self._history),
             'ndim': np.asarray(self._ndim),
             'normmean': np.asarray(self._normmean),
-            'normstd': np.asarray(self._normstd)
+            'normstd': np.asarray(self._normstd),
+            'resp': np.asarray(self._resp)
         }
         np.savez(file, **things_to_save)
     
+    @classmethod
     def from_saved(cls, *args, **kwargs):
-        np.load(*args, **kwargs)
-        object = cls.__new__(GaussianMixture)
+        archive = np.load(*args, **kwargs)
+        obj = cls.__new__(cls)
+        for arrname in archive.files:
+            value = archive[arrname]
+            if arrname == 'history':
+                value = value.tolist()
+            elif arrname == 'ndim':
+                value = np.asscalar(value)
+            elif value.size == 1 and value == np.array(None):
+                value = None
+            setattr(obj, '_%s' % arrname, value)
+        return obj
     
     def __init__(self, ncomponent, ndim, norm=None, pcounts=0, update=None):
         """
         Constructor. Add real documentation.
         """
         self._ndim = ndim
-        self.history = []
+        self._history = []
         
         if norm is not None:
             self._normmean = norm.mean(axis=0)
@@ -316,11 +328,14 @@ class GaussianMixture(object):
     def EM(self, data, thresh=1e-6, pcounts=0, plotiter=50, hardlimit=2000):
         """Do expectation-maximization to fit the model parameters."""
         
-        if len(self.history) == 0:
+        if len(self._history) == 0:
             lprev = 0
             lcurr = -np.inf
+        else:
+            lprev = -np.inf
+            lcurr = self._history[-1]
         
-        count = len(self.history)
+        count = len(self._history)
         
         if pcounts > 0:
             pcmean = data.mean(axis=0)
@@ -329,7 +344,7 @@ class GaussianMixture(object):
         
         while np.abs(lprev - lcurr) > thresh and count < hardlimit:
             if plotiter != None and count > 0 and count % plotiter == 0:
-                plot_progress(self.history)
+                plot_progress(self._history)
             
             if DEBUG:
                 self._oldresp = self._resp[:]
@@ -350,14 +365,14 @@ class GaussianMixture(object):
             if lcurr < lprev:
                 _print_now("Likelihood went down!")
             
-            self.history.append(lcurr)
+            self._history.append(lcurr)
             
             count += 1
             _print_now("%5d: L = %10.5f" % (count, lcurr))
             
             # Plot progress of the optimization
             if plotiter != None and count > 0 and count % plotiter == 0:
-                plot_progress(self.history)
+                plot_progress(self._history)
     
         
     def display(self, precision=None, logalpha=None, name=None, figurenum=1):
