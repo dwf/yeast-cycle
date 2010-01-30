@@ -5,6 +5,8 @@ from itertools import izip
 import numpy as np
 from scipy.interpolate import splrep
 
+import tables
+
 from new_tools import DataSet, Plate, ImageSilhouette, ObjectSilhouette
 from new_tools import MedialRepresentation
 
@@ -123,5 +125,12 @@ if __name__ == "__main__":
     nknots = int(nknots)
     
     h5file = tables.openFile(sys.argv[1])
+
+    splines = splines_from_h5file(h5file, nknots, areathresh, where)
     
+    if where is not None:
+        sss = '_'.join(where.split('/'))
+        np.save('%s-%s' % (filename, sss), splines)
     
+    else:
+        np.save('%s' % filename, splines)

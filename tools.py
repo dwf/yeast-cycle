@@ -15,7 +15,7 @@ import matplotlib.image
 import matplotlib.pyplot as pyplot
 import matplotlib.legend as mlegend
 import matplotlib.font_manager as font
-import wx
+#import wx
 
 
 
@@ -98,8 +98,8 @@ def spline_features(obj,axisknots=3,widthknots=3,order=4,plot=False,fig=None):
         axes.plot(np.mgrid[0:1:(len(med)*1j)],med,label='Medial axis')
         axes.plot(np.mgrid[0:1:(len(width)*1j)],width,label='Width')
         axes.legend(prop=font.FontProperties(size='x-small'))
-        if hasattr(fig.canvas, 'draw'):
-            wx.CallAfter(fig.canvas.draw)
+        #if hasattr(fig.canvas, 'draw'):
+        #    wx.CallAfter(fig.canvas.draw)
         
     dep_var = np.mgrid[0:1:500j]
     med_tck = generate_spline(med, nknots=axisknots, order=order)
