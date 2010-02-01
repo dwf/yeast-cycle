@@ -438,7 +438,7 @@ class GaussianMixture(object):
                         batchlogal[batch]
                     )
                     if count > 0 and batch > 0:
-                    lcurr += self.e_step(databatch)
+                        lcurr += self.e_step(databatch)
                 
                 self.m_step(databatch, pcounts, pcmean, out=batchparams)
             
