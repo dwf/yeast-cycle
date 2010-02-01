@@ -20,7 +20,7 @@ DEBUG = False
 
 class MedialRepresentation(HasTraits):
     """docstring for MedialRepresentation"""
-    _silhouette = Instance("ObjectSilhouette")
+    #_silhouette = Instance("ObjectSilhouette")
     silhouette = Property(depends_on="_silhouette")
     length = Property(Float, depends_on="silhouette")
     medial_axis = Property(Array, depends_on="silhouette")
@@ -85,8 +85,7 @@ class ObjectSilhouette(HasTraits):
     """Class representing a single cell silhouette in an image."""
     image = Array(dtype=bool) 
     is_aligned = Bool()
-    _aligned_version = Instance("ObjectSilhouette")
-    _medial_repr = Instance("MedialRepresentation")
+    #_medial_repr = Instance("MedialRepresentation")
     
     # This could be a Delegate, except that we'd like to trigger creation
     # on get
@@ -115,8 +114,8 @@ class ObjectSilhouette(HasTraits):
             except EllipseAlignmentError:
                 traceback.print_exc()
                 return None
-            self._aligned_version = ObjectSilhouette(image=rotated, 
-                is_aligned=True)
+            newobj = ObjectSilhouette(image=rotated, is_aligned=True)
+            self._aligned_version = newobj
         return self._aligned_version
     
     def _get_medial_repr(self):
