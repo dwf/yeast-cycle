@@ -271,9 +271,11 @@ class GaussianMixture(object):
         self._m_step_update_logalpha(data)
     
     
-    def _m_step_update_means(self, data, pcounts=0, pcmean=None):
+    def _m_step_update_means(self, data, pcounts=0, pcmean=None, out=None):
         """Do the M-step update for the means of each component."""
-        #pdb.set_trace()
+        if out is None:
+            out = self._means
+        
         resp = self._resp[:, :data.shape[0]]
         sumresp = resp.sum(axis=1)
         if np.any(sumresp == 0):
@@ -291,13 +293,15 @@ class GaussianMixture(object):
         means /= den
         
         if self._updating_all():
-            self._means[...] = means
+            out[...] = means
         else:
-            self._means[self._update, ...] = means[self._update, ...]
+            out[self._update, ...] = means[self._update, ...]
     
 
-    def _m_step_update_covariances(self, data, pcounts=0):
+    def _m_step_update_covariances(self, data, pcounts=0, out=None):
         """Do the M-step update for the covariances."""
+        if out is None:
+            out = self._covariances
         resp = self._resp[:, :data.shape[0]]
         sumresp = resp.sum(axis=1)
         means = self._means
@@ -314,20 +318,24 @@ class GaussianMixture(object):
                     np.eye(self._ndim)) / \
                     (sumresp[clust] + pcounts)
                 
-                self._covariances[clust, ...] = newsigma
+                out[clust, ...] = newsigma
     
 
-    def _m_step_update_logalpha(self, data):
+    def _m_step_update_logalpha(self, data, out=None):
         """Do the M-step update for the log prior."""
+        
+        if out is None:
+            out = self._logalpha
+        
         sumresp = self._resp[:, :data.shape[0]].sum(axis=1)
-        self._logalpha = np.log(sumresp) - np.log(sumresp.sum())
+        out[...] = np.log(sumresp) - np.log(sumresp.sum())
         
         # Any infinite quantities
-        self._logalpha[np.isinf(self._logalpha)] = MIN_LOGPROB
+        out[np.isinf(out)] = MIN_LOGPROB
         
         # Renormalize
-        alpha = np.exp(self._logalpha)
-        self._logalpha = np.log(alpha) - np.log(np.sum(alpha)) 
+        alpha = np.exp(out)
+        out[...] = np.log(alpha) - np.log(np.sum(alpha)) 
     
 
     def EM(self, data, thresh=1e-6, pcounts=0, plotiter=50, hardlimit=2000):
@@ -396,20 +404,44 @@ class GaussianMixture(object):
         else:
             pcmean = None
         
+        nbatches = np.ceil(data.shape[0] / batchsize)
+        batchcovs = np.empty((nbatches,) + self._covariances.shape)
+        batchmeans = np.empty((nbatches,) + self._means.shape)
+        batchlogal = np.empty((nbatches,) + self._logalpha.shape)
+        batchmultipliers = np.array([batchsize] * (nbatches - 1) + 
+                                    [data.shape[0] % batchsize], dtype=float)
+        batchmultipliers /= data.shape[0]
+        
+        
         while np.abs(lprev - lcurr) > thresh and count < hardlimit:
             lprev = lcurr
-            lcurr = 0
-            nbatches = np.ceil(data.shape[0] / batchsize)
-            for batch in xrange(nbatches):
+            if count == 0:
+                # Do a full round of M-steps (with randomly initialized posterior)
+                for batch in xrange(int(nbatches)):
+                    batchparams = (
+                        batchmeans[batch],
+                        batchcovs[batch],
+                        batchlogal[batch]
+                    )
+                    databatch = data[batch * batchsize:(batch + 1) * batchsize]
+                    self.m_step(databatch, pcounts, pcmean, out=batchparams)
+            
+            else:
+                for batch in xrange(int(nbatches)):
+                    #_print_now("Batch %d/%d..." % (batch + 1, nbatches))
                 
-                _print_now("Batch %d/%d..." % (batch + 1, nbatches))
+                    databatch = data[batch * batchsize:(batch + 1) * batchsize]
                 
-                databatch = data[batch * batchsize:(batch + 1) * batchsize]
+                    batchparams = (
+                        batchmeans[batch],
+                        batchcovs[batch],
+                        batchlogal[batch]
+                    )
+                    if count > 0 and batch > 0:
+                    lcurr += self.e_step(databatch)
                 
-                self.m_step(databatch, pcounts, pcmean)
-                
-                lcurr += self.e_step(databatch)
-
+                self.m_step(databatch, pcounts, pcmean, out=batchparams)
+            
             self._history.append(lcurr)
             
             count += 1
@@ -424,7 +456,7 @@ class GaussianMixture(object):
             if precision == None:
                 precision = self._precision
             if logalpha == None:
-                precision = self._logalpha
+                logalpha = self._logalpha
             if name == None:
                 name = "mixture"
             
