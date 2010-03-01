@@ -4,13 +4,15 @@ import numpy.linalg as linalg
 import numpy.random as random
 import pdb
 import sys
+from functools import wraps
 
-FINFO = np.finfo(np.float64)
-MIN_PROB = FINFO.tiny
-MIN_LOGPROB = np.log(MIN_PROB)
+# Constants useful for the module to use
+_FLOAT_T = np.float64
+_MIN_PROB = np.finfo(_FLOAT_T).tiny
+_MIN_LOGPROB = np.log(_MIN_PROB)
+_LOG2PI = np.log(2 * np.pi)
+_DEBUG = False
 
-DEBUG_LIKELIHOOD_DECREASE = False
-DEBUG = False
 
 try:
     import matplotlib.pyplot as pyplot
@@ -28,7 +30,7 @@ def logsumexp(logx, axis=-1):
     
     By Roland Memisevic, distributed under Python License.
     """
-    if len(logx.shape) < 2:  #only one possible dimension to sum over?
+    if len(logx.shape) < 2:
         xmax = logx.max()
         return xmax + np.log(np.sum(np.exp(logx-xmax)))
     else:
@@ -120,10 +122,9 @@ class GaussianMixture(object):
         
         # Make space for our model parameters
         means = np.empty((ncomponent, ndim))
-        covariances = np.empty((ncomponent, ndim, ndim))
+        covariances = self._allocate_covariances(ncomponent, ndim)
         memberships = np.empty((ncomponent))
         resp = None
-        #resp = np.empty((ncomponent, ntrain))
         
         # Initialize them
         self._logalpha = memberships
@@ -132,16 +133,18 @@ class GaussianMixture(object):
         self._resp = resp
         
         # For saving last iteration parameters for debugging
-        if DEBUG:
+        if _DEBUG:
             self._oldmeans, self._oldcov, self._oldlogalpha = \
                 None, None, None
             self._oldresp = None
     
-
+    def _allocate_covariances(self, ncomponent, ndim):
+        """For easy overriding in the diagonal case."""
+        return np.empty((ncomponent, ndim, ndim))
+    
     def _ndim(self):
         """Return the number of dimensions in the training set."""
         return self._ndim
-    
     
     def _ncomponent(self):
         """Return the number of components in the mixture."""
@@ -202,16 +205,13 @@ class GaussianMixture(object):
         """
         centered = data - self._means[clust, ...][np.newaxis, ...]
         ndim = self._ndim
-        #logphat = -0.5 * (centered * np.dot(centered,
-        #    self._precision[:, :, clust])).sum(axis=1)
         logphat = linalg.solve(self._covariances[clust, ...], centered.T)
         logphat *= centered.T
         logphat *= -0.5
         logphat = logphat.sum(axis=0)
 
-        #lognormalizer = ndim/2.0 * np.log(2*np.pi) - 0.5 * \
-        #    np.log(linalg.det(self._precision[:, :, clust]))
-        lognormalizer = ndim / 2.0 * np.log(2 * np.pi) + 0.5 * \
+        # TODO: calculate logdet in a way less prone to overflow.
+        lognormalizer = ndim / 2.0 * _LOG2PI + 0.5 * \
                 np.log(linalg.det(self._covariances[clust, ...]))
         
         return logphat - lognormalizer
@@ -243,7 +243,7 @@ class GaussianMixture(object):
         
         logjoint, lik = self._logjoint(data)
         logresp = logjoint - lik
-        logresp[logresp < MIN_LOGPROB] = MIN_LOGPROB
+        logresp[logresp < _MIN_LOGPROB] = _MIN_LOGPROB
         np.exp(logresp, self._resp[:, :data.shape[0]])
         return lik.sum()
     
@@ -273,7 +273,6 @@ class GaussianMixture(object):
     
     def _m_step_update_means(self, data, pcounts=0, pcmean=None):
         """Do the M-step update for the means of each component."""
-        #pdb.set_trace()
         resp = self._resp[:, :data.shape[0]]
         sumresp = resp.sum(axis=1)
         if np.any(sumresp == 0):
@@ -323,11 +322,11 @@ class GaussianMixture(object):
         self._logalpha = np.log(sumresp) - np.log(sumresp.sum())
         
         # Any infinite quantities
-        self._logalpha[np.isinf(self._logalpha)] = MIN_LOGPROB
+        self._logalpha[np.isinf(self._logalpha)] = _MIN_LOGPROB
         
         # Renormalize
         alpha = np.exp(self._logalpha)
-        self._logalpha = np.log(alpha) - np.log(np.sum(alpha)) 
+        self._logalpha = np.log(alpha) - np.log(np.sum(alpha))
     
 
     def EM(self, data, thresh=1e-6, pcounts=0, plotiter=50, hardlimit=2000):
@@ -351,7 +350,7 @@ class GaussianMixture(object):
             if plotiter != None and count > 0 and count % plotiter == 0:
                 plot_progress(self._history)
             
-            if DEBUG:
+            if _DEBUG:
                 self._oldresp = self._resp[:]
                 self._oldlogalpha = self._logalpha[:]
                 self._oldmeans = self._means[:]
@@ -379,135 +378,199 @@ class GaussianMixture(object):
             if plotiter != None and count > 0 and count % plotiter == 0:
                 plot_progress(self._history)
     
-    def minibatch_EM(self, data, batchsize, thresh=1e-6, \
-                     pcounts=0, plotiter=50, hardlimit=20000):
-        """"""
-        if len(self._history) == 0:
-            lprev = 0
-            lcurr = -np.inf
-        else:
-            lprev = -np.inf
-            lcurr = self._history[-1]
+    # def minibatch_EM(self, data, batchsize, thresh=1e-6, \
+    #                  pcounts=0, plotiter=50, hardlimit=20000):
+    #     """"""
+    #     if len(self._history) == 0:
+    #         lprev = 0
+    #         lcurr = -np.inf
+    #     else:
+    #         lprev = -np.inf
+    #         lcurr = self._history[-1]
+    #     
+    #     count = len(self._history)
+    #     
+    #     if pcounts > 0:
+    #         pcmean = data.mean(axis=0)
+    #     else:
+    #         pcmean = None
+    #     
+    #     while np.abs(lprev - lcurr) > thresh and count < hardlimit:
+    #         lprev = lcurr
+    #         lcurr = 0
+    #         nbatches = np.ceil(data.shape[0] / batchsize)
+    #         for batch in xrange(nbatches):
+    #             
+    #             _print_now("Batch %d/%d..." % (batch + 1, nbatches))
+    #             
+    #             databatch = data[batch * batchsize:(batch + 1) * batchsize]
+    #             
+    #             self.m_step(databatch, pcounts, pcmean)
+    #             
+    #             lcurr += self.e_step(databatch)
+    # 
+    #         self._history.append(lcurr)
+    #         
+    #         count += 1
+    #         _print_now("%5d: L = %10.5f" % (count, lcurr))
+    #         
+    #         if plotiter != None and count > 0 and count % plotiter == 0:
+    #             plot_progress(self._history)
         
-        count = len(self._history)
-        
-        if pcounts > 0:
-            pcmean = data.mean(axis=0)
-        else:
-            pcmean = None
-        
-        while np.abs(lprev - lcurr) > thresh and count < hardlimit:
-            lprev = lcurr
-            lcurr = 0
-            nbatches = np.ceil(data.shape[0] / batchsize)
-            for batch in xrange(nbatches):
-                
-                _print_now("Batch %d/%d..." % (batch + 1, nbatches))
-                
-                databatch = data[batch * batchsize:(batch + 1) * batchsize]
-                
-                self.m_step(databatch, pcounts, pcmean)
-                
-                lcurr += self.e_step(databatch)
-
-            self._history.append(lcurr)
-            
-            count += 1
-            _print_now("%5d: L = %10.5f" % (count, lcurr))
-            
-            if plotiter != None and count > 0 and count % plotiter == 0:
-                plot_progress(self._history)
-        
-    def display(self, precision=None, logalpha=None, name=None, figurenum=1):
+    def display(self, covariances=None, logalpha=None, name=None, figurenum=1):
         """Display covariances and alphas with matplotlib."""
         if PLOTTING_AVAILABLE:
-            if precision == None:
-                precision = self._precision
-            if logalpha == None:
-                precision = self._logalpha
-            if name == None:
-                name = "mixture"
+            try:
+                if covariances == None:
+                    covariances = self._covariances
             
-            pyplot.ioff()
-            pyplot.figure(figurenum)
-            pyplot.clf()
-            rows = cols = np.ceil(np.sqrt(self._ncomponent()))
-            if rows * cols == self._ncomponent():
-                rows = rows + 1
+                if logalpha == None:
+                    logalpha = self._logalpha
             
-            for clust in xrange(self._ncomponent()):    
-                pyplot.subplot(rows, cols, clust+1)
-                pyplot.matshow(self._covariances[clust, ...], fignum=False)
-                pyplot.title('Precision matrix for %s component %d' % (name, clust + 1),
-                    fontsize='small')
-                pyplot.colorbar()
+                if name == None:
+                    name = "mixture"
+                
+                # Save state of interactive mode and turn it off.
+                istate = pyplot.isinteractive()
+                pyplot.ioff()
             
-            pyplot.subplot(rows, cols, self._ncomponent()+1)
-            pyplot.bar(bottom=np.zeros(self._ncomponent()), left=np.arange(1, 
-                self._ncomponent()+1)-0.5, height=np.exp(self._logalpha),
-                    width=1)
-            pyplot.xticks(np.arange(1, self._ncomponent() + 1))
-            pyplot.title('Mixing proportions')
-            pyplot.show()
-            pyplot.ion()
+                # Create figure instance.
+                pyplot.figure(figurenum)
+                pyplot.clf()
+            
+                # Calculate necessary subplot dimensions for a roughly square 
+                rows = np.floor(np.sqrt(self._ncomponent()))
+                cols = np.ceil(np.sqrt(self._ncomponent()))
+            
+                # Add one more row if we have a perfect square, for the 
+                # preferences bar chart
+                while rows * cols <= self._ncomponent():
+                    rows = rows + 1
+            
+                for clust in xrange(self._ncomponent()):    
+                    pyplot.subplot(rows, cols, clust + 1)
+                    self._display_covariance_matrix(clust)
+                    title = 'Covariance for %s component %d' % (name, clust + 1)
+                    pyplot.title(title, fontsize='small')
+                    pyplot.colorbar()
+            
+                # Plot a bar graph of the mixing proportions in an extra subplot
+                pyplot.subplot(rows, cols, self._ncomponent() + 1)
+            
+                # Do the bar graph and make it look reasonable
+                pyplot.bar(
+                    bottom=np.zeros(self._ncomponent()), 
+                    left=np.arange(1, self._ncomponent() + 1) - 0.5,
+                    height=np.exp(self._logalpha),
+                    width=1
+                )
+            
+                # xticks for each bar in the bar graph.
+                pyplot.xticks(np.arange(1, self._ncomponent() + 1))
+                pyplot.title('Mixing proportions')
+            
+                # Display figure.
+                pyplot.show()
+            finally:
+                # Restore previous interactivity state.
+                pyplot.interactive(istate)
+    
+    def _display_covariance_matrix(self, clust):
+        pyplot.matshow(self._covariances[clust, ...], fignum=False)
     
 
+class DiagonalGaussianMixture(GaussianMixture):
+    """
+    A diagonal Gaussian mixture (i.e. all components) are restricted
+    to have diagonal covariance matrices).
+    """
+    def _allocate_covariances(self, ncomponent, ndim):
+        """
+        Allocate space for the model covariances. In the diagonal case, 
+        this requires only ndim elements.
+        """
+        return np.empty((ncomponent, ndim))
+    
+    def _m_step_update_covariances(self, data, pcounts):
+        # TODO: reduce code duplication
+        resp = self._resp[:, :data.shape[0]]
+        sumresp = resp.sum(axis=1)
+        means = self._means
+        meansub = data[np.newaxis, ...] - means[:, np.newaxis, ...]
+        meansub2 = np.array(meansub)
+        meansub *= resp[..., np.newaxis]
+        for clust in xrange(self._ncomponent()):
+            if self._update[clust]:
+                xmmu = meansub[clust, ...]
+                xmmu2 = meansub2[clust, ...]
+                #  TODO: Optimize pseudocount addition
+                newsigma = (np.dot(xmmu.T, xmmu2) + \
+                    pcounts * \
+                    np.eye(self._ndim)) / \
+                    (sumresp[clust] + pcounts)
+                
+                self._covariances[clust, ...] = np.diag(newsigma)
 
-class GaussianMixtureWithGarbageModel(GaussianMixture):
+    def log_probs(self, clust, data):
+        """
+        Log probability of each training data point under a particular
+        mixture component.
+        """
+        logphat = data - self._means[clust, ...][np.newaxis, ...]
+        logphat **= 2.
+        logphat /= self._covariances[clust, ...][np.newaxis, :]
+        
+        logphat *= -0.5
+        logphat = logphat.sum(axis=1)
+        
+        # Determinant is the product of the diagonal covariance matrix
+        # but we want log determinant anyway, so take the log and sum.
+        ndim = self._ndim
+        lognormalizer = ndim / 2.0 * _LOG2PI + 0.5 * \
+                np.log(self._covariances[clust, ...]).sum()
+
+        return logphat - lognormalizer
+        
+    def _display_covariance_matrix(self, clust):
+        pyplot.matshow(np.diag(self._covariances[clust, ...]), fignum=False)
+    
+    
+
+class GarbageModelGaussianMixture(GaussianMixture):
     """
-    A Gaussian mixture model that has one extra component with parameters
-    equal to the mean and covariance of the data and is fixed.
+    A garbage model.
     """
-    def __init__(self, ncomponent, data, *args, **keywords):
-        """Initialize the model."""
-        update = np.ones((ncomponent+1,), dtype=bool)
+    def __init__(self, ncomponent, ndim, norm=None, pcounts=0, garbage=0.5):
+        update = np.ones(ncomponent, dtype=bool)
         update[0] = False
-        if 'update' in keywords:
-            if len(keywords['update']) != ncomponent:
-                raise ValueError("'update' argument must be K elements long")
-            update[1:] = keywords['update']
-        keywords['update'] = update
-        GaussianMixture.__init__(self, ncomponent + 1, data, 
-            *args, **keywords)
-        self._train_data_precision = linalg.inv(np.cov(data, rowvar=False))
-        self._precision[:, :, 0] = self._train_data_precision
-        self._means[0, :] = np.mean(data, axis=0)
+        super(GarbageModelGaussianMixture, self).__init__(
+            ncomponent, ndim, norm, pcounts, update=update
+        )
+        self._logalpha[0] = np.log(garbage)
+        
+    def _m_step_update_logalpha(self, data):
+        """Do the M-step update for the log prior."""
+        
+        # Keep this for later
+        garbageprop = np.exp(self._logalpha[0])
+        
+        sumresp = self._resp[:, :data.shape[0]].sum(axis=1)
+        self._logalpha = np.log(sumresp) - np.log(sumresp.sum())
+
+        # Any infinite quantities
+        self._logalpha[np.isinf(self._logalpha)] = _MIN_LOGPROB
+
+        # Renormalize
+        alpha = np.exp(self._logalpha)
+        alpha[0] = garbageprop
+        alpha[1:] /= alpha[1:].sum()
+        alpha[1:] *= (1 - garbageprop)
+        self._logalpha = np.log(alpha)
     
-
-
-# class DiagonalGaussianMixture(GaussianMixture):
-#     """
-#     A Gaussian mixture model that has one extra component with parameters
-#     equal to the mean and covariance of the data and is fixed.
-#     """
-#     def _m_step_update_precisions(self, pcounts=0):
-#         """Do the M-step update for the precisions (inverse covariances)."""
-#         resp = self._resp
-#         sumresp = resp.sum(axis=1)
-#         means = self._means
-#         meansub = data[:, :, np.newaxis] - means.T[np.newaxis, :, :]
-#         meansub2 = np.array(meansub)
-#         meansub *= self._resp.T[:, np.newaxis, :]
-#         for clust in xrange(self._ncomponent()):
-#             if self._update[clust]:
-#                 xmmu = meansub[:, :, clust]
-#                 xmmu2 = meansub2[:, :, clust]
-#                 newsigma = ((xmmu * xmmu2).sum(axis=0) + \
-#                     pcounts) / (sumresp[clust] + \
-#                     pcounts)
-#                 newprec = newsigma # No copy
-#                 newprec **= -1. # Invert
-#                 if np.any(np.isnan(newprec)) or np.any(np.isinf(newprec)): 
-#                     _print_now("WARNING: Zero div updating precision %d" \
-#                     % clust)
-#                 else:
-#                     self._precision[:, :, clust] = np.diag(newprec)
-#     
-#     
-#     def _numparams(self):
-#         """Return the number of free parameters in the model."""
-#         covparams = self._ndim
-#         meanparams = self._ndim
-#         return self._ncomponent() * (covparams + meanparams) + \
-#             (self._ncomponent() - 1)
-#     
+    @wraps(GaussianMixture.EM)
+    def EM(self, data, *args, **kwargs):        
+        if len(self._history) == 0:
+            self._covariances[0, ...] = np.cov(data, rowvar=0)
+            self._means[0, ...] = data.mean(axis=0)
+        super(GarbageModelGaussianMixture, self).EM(data, *args, **kwargs)
+        
