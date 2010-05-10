@@ -68,6 +68,7 @@ class GaussianMixture(object):
     def save(self, file):
         """Save to a .npz file."""
         things_to_save = {
+            'classname': self.__class__.__name__,
             'covariances': self._covariances,
             'means': self._means,
             'logalpha': self._logalpha, 
@@ -85,8 +86,14 @@ class GaussianMixture(object):
         """Load a serialized .npz GaussianMixture class."""
         archive = np.load(*args, **kwargs)
         obj = cls.__new__(cls)
+        if cls.__name__ != archive['classname']:
+            raise TypeError('needs to be loaded with %s class' %
+                            archive['classname'])
+        
         for arrname in archive.files:
             value = archive[arrname]
+            if arrname == 'classname':
+                continue
             if arrname == 'history':
                 value = value.tolist()
             elif arrname == 'ndim':
@@ -378,45 +385,6 @@ class GaussianMixture(object):
             if plotiter != None and count > 0 and count % plotiter == 0:
                 plot_progress(self._history)
     
-    # def minibatch_EM(self, data, batchsize, thresh=1e-6, \
-    #                  pcounts=0, plotiter=50, hardlimit=20000):
-    #     """"""
-    #     if len(self._history) == 0:
-    #         lprev = 0
-    #         lcurr = -np.inf
-    #     else:
-    #         lprev = -np.inf
-    #         lcurr = self._history[-1]
-    #     
-    #     count = len(self._history)
-    #     
-    #     if pcounts > 0:
-    #         pcmean = data.mean(axis=0)
-    #     else:
-    #         pcmean = None
-    #     
-    #     while np.abs(lprev - lcurr) > thresh and count < hardlimit:
-    #         lprev = lcurr
-    #         lcurr = 0
-    #         nbatches = np.ceil(data.shape[0] / batchsize)
-    #         for batch in xrange(nbatches):
-    #             
-    #             _print_now("Batch %d/%d..." % (batch + 1, nbatches))
-    #             
-    #             databatch = data[batch * batchsize:(batch + 1) * batchsize]
-    #             
-    #             self.m_step(databatch, pcounts, pcmean)
-    #             
-    #             lcurr += self.e_step(databatch)
-    # 
-    #         self._history.append(lcurr)
-    #         
-    #         count += 1
-    #         _print_now("%5d: L = %10.5f" % (count, lcurr))
-    #         
-    #         if plotiter != None and count > 0 and count % plotiter == 0:
-    #             plot_progress(self._history)
-        
     def display(self, covariances=None, logalpha=None, name=None, figurenum=1):
         """Display covariances and alphas with matplotlib."""
         if PLOTTING_AVAILABLE:
@@ -533,44 +501,4 @@ class DiagonalGaussianMixture(GaussianMixture):
         
     def _display_covariance_matrix(self, clust):
         pyplot.matshow(np.diag(self._covariances[clust, ...]), fignum=False)
-    
-    
 
-class GarbageModelGaussianMixture(GaussianMixture):
-    """
-    A garbage model.
-    """
-    def __init__(self, ncomponent, ndim, norm=None, pcounts=0, garbage=0.5):
-        update = np.ones(ncomponent, dtype=bool)
-        update[0] = False
-        super(GarbageModelGaussianMixture, self).__init__(
-            ncomponent, ndim, norm, pcounts, update=update
-        )
-        self._logalpha[0] = np.log(garbage)
-        
-    def _m_step_update_logalpha(self, data):
-        """Do the M-step update for the log prior."""
-        
-        # Keep this for later
-        garbageprop = np.exp(self._logalpha[0])
-        
-        sumresp = self._resp[:, :data.shape[0]].sum(axis=1)
-        self._logalpha = np.log(sumresp) - np.log(sumresp.sum())
-
-        # Any infinite quantities
-        self._logalpha[np.isinf(self._logalpha)] = _MIN_LOGPROB
-
-        # Renormalize
-        alpha = np.exp(self._logalpha)
-        alpha[0] = garbageprop
-        alpha[1:] /= alpha[1:].sum()
-        alpha[1:] *= (1 - garbageprop)
-        self._logalpha = np.log(alpha)
-    
-    @wraps(GaussianMixture.EM)
-    def EM(self, data, *args, **kwargs):        
-        if len(self._history) == 0:
-            self._covariances[0, ...] = np.cov(data, rowvar=0)
-            self._means[0, ...] = data.mean(axis=0)
-        super(GarbageModelGaussianMixture, self).EM(data, *args, **kwargs)
-        
